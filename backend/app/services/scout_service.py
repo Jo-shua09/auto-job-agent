@@ -555,3 +555,106 @@ def list_discovered_jobs(status_filter: Optional[JobStatus] = None, user_id: Opt
         query = query.where("status", "==", status_filter.value)
     docs = [doc.to_dict() for doc in query.stream()]
     return sorted(docs, key=lambda x: x.get("match_score", 0), reverse=True)
+
+    from collections import defaultdict
+
+def log_agent_step(
+    user_friendly_title: str,
+    user_friendly_detail: str,
+    phase: str = "SCOUT",
+    status: str = "completed",
+    job_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+) -> dict:
+    """
+    Records a Lovable-style, plain-English progress step in Firestore
+    so the UI can display exactly what the agent is doing in human terms.
+    """
+    user_ref = get_user_ref(user_id)
+    step_id = f"step_{uuid.uuid4().hex[:10]}"
+    payload = {
+        "id": step_id,
+        "job_id": job_id,
+        "phase": phase,  # SCOUT, TAILOR, APPLY, OTP
+        "title": clean_no_em_dash(user_friendly_title),
+        "detail": clean_no_em_dash(user_friendly_detail),
+        "status": status,  # active, completed, waiting_input, error
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    user_ref.collection("activity_stream").document(step_id).set(payload)
+    return payload
+
+def get_recent_activity_stream(limit: int = 25, user_id: Optional[str] = None) -> List[dict]:
+    """Returns the latest plain-English agent steps for the Lovable-style progress stream."""
+    user_ref = get_user_ref(user_id)
+    docs = [d.to_dict() for d in user_ref.collection("activity_stream").stream()]
+    sorted_docs = sorted(docs, key=lambda x: x.get("timestamp", ""), reverse=True)
+    return sorted_docs[:limit]
+
+def get_applied_jobs_grouped_by_day(user_id: Optional[str] = None) -> dict:
+    """
+    Returns all applied/post-application jobs grouped chronologically by Day
+    (e.g. 'Saturday, Oct 31, 2026') along with their tailored CV PDF links.
+    """
+    user_ref = get_user_ref(user_id)
+    applied_statuses = {
+        JobStatus.APPLIED.value,
+        JobStatus.INTERVIEW_INVITE.value,
+        JobStatus.REPLIED_REJECTED.value,
+        JobStatus.OFFER_STAGE.value,
+        JobStatus.APPLYING_QUEUED.value,
+        JobStatus.APPLYING_ACTIVE.value,
+        JobStatus.WAITING_FOR_OTP.value,
+    }
+
+    all_jobs = [d.to_dict() for d in user_ref.collection("jobs").stream()]
+    packages_map = {
+        d.id: d.to_dict() for d in user_ref.collection("tailored_packages").stream()
+    }
+
+    history_jobs = [j for j in all_jobs if j.get("status") in applied_statuses]
+    # Sort newest applied_at (or discovered_at) first
+    history_jobs.sort(
+        key=lambda x: str(x.get("applied_at") or x.get("discovered_at") or ""),
+        reverse=True,
+    )
+
+    grouped: dict[str, list] = defaultdict(list)
+    for j in history_jobs:
+        raw_ts = str(j.get("applied_at") or j.get("discovered_at") or "")
+        try:
+            dt = datetime.fromisoformat(raw_ts.replace("Z", "+00:00"))
+            day_key = dt.strftime("%Y-%m-%d")
+            day_label = dt.strftime("%A, %b %d, %Y")
+            time_label = dt.strftime("%I:%M %p")
+        except Exception:
+            day_key = "Recent"
+            day_label = "Recent Applications"
+            time_label = ""
+
+        pkg = packages_map.get(j["id"], {})
+        cv_path = pkg.get("cv_pdf_url")
+        j_enriched = {
+            **j,
+            "applied_day_key": day_key,
+            "applied_day_label": day_label,
+            "applied_time_label": time_label,
+            "cv_preview_url": f"http://localhost:8000{cv_path}" if cv_path else None,
+            "cover_letter_text": pkg.get("cover_letter_text"),
+            "critic_score": pkg.get("critic_score"),
+        }
+        grouped[day_label].append(j_enriched)
+
+    days_list = [
+        {
+            "day_label": day_label,
+            "count": len(items),
+            "applications": items,
+        }
+        for day_label, items in grouped.items()
+    ]
+
+    return {
+        "total_applications_tracked": len(history_jobs),
+        "days": days_list,
+    }
