@@ -19,11 +19,24 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html
-      lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
-    >
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
 }
+
+import { createFileRoute, Outlet, redirect } from "@tanstack/react-router";
+import { getDemoUser } from "@/lib/api";
+import { AppShell } from "@/components/app-shell";
+
+export const Route = createFileRoute("/_authenticated")({
+  ssr: false,
+  beforeLoad: () => {
+    if (!getDemoUser()) throw redirect({ to: "/auth" });
+  },
+  component: () => (
+    <AppShell>
+      <Outlet />
+    </AppShell>
+  ),
+});

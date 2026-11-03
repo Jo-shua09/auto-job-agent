@@ -288,6 +288,13 @@ async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> di
         raise ValueError(f"Job {job_id} not found in Firestore.")
 
     job = JobRecord.model_validate(job_snap.to_dict())
+    # If the job came from a short Serper search snippet, fetch the full JD page before tailoring
+    if len(job.raw_jd_text) < 400 and job.external_url.startswith("http"):
+        from app.services.scout_service import fetch_job_page_text
+        full_text = await fetch_job_page_text(job.external_url)
+        if len(full_text) > len(job.raw_jd_text):
+            job.raw_jd_text = full_text
+            job_doc_ref.update({"raw_jd_text": full_text})
     profile = MasterProfile.model_validate(get_master_profile(user_id))
 
     # Move state to TAILORING_IN_PROGRESS if coming from DISCOVERED or AWAITING_APPROVAL
