@@ -2,54 +2,20 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Check, Eye, EyeOff, Loader2 } from "lucide-react";
+import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { demoSignIn, getDemoUser } from "@/lib/api";
+import { auth, loginWithFirebaseEmail, loginWithFirebaseGoogle, onAuthStateChanged, registerWithFirebaseEmail } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandMark, BrandName } from "@/components/brand";
 import { cn } from "@/lib/utils";
 
-const DEMO_STEPS = [
-  "Scanning 15+ job boards for your roles",
-  "Found 6 matches · removed 2 duplicates",
-  "Tailoring your CV for VercelLabs (96% match)",
-  "Checking every line against your real experience",
-  "Ready for your review",
-];
-
 function StepShowcase() {
-  const [n, setN] = useState(1);
-  useEffect(() => {
-    const t = setInterval(() => setN((x) => (x >= DEMO_STEPS.length ? 1 : x + 1)), 1600);
-    return () => clearInterval(t);
-  }, []);
   return (
     <div className="w-full max-w-md rounded-3xl border border-border/70 bg-card/70 p-5 shadow-soft backdrop-blur-xl">
-      <p className="mb-4 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">Live · agent at work</p>
-      <ol className="space-y-3">
-        {DEMO_STEPS.map((s, i) => {
-          const state = i < n - 1 ? "done" : i === n - 1 ? "active" : "pending";
-          return (
-            <li key={s} className={cn("flex items-center gap-3 transition-opacity duration-500", state === "pending" && "opacity-35")}>
-              <span
-                className={cn(
-                  "grid size-6 shrink-0 place-items-center rounded-full border",
-                  state === "done" ? "border-transparent bg-accent text-accent-foreground" : "border-mint",
-                )}
-              >
-                {state === "done" ? (
-                  <Check className="size-3.5" />
-                ) : state === "active" ? (
-                  <span className="animate-pulse-dot size-2 rounded-full bg-mint" />
-                ) : null}
-              </span>
-              <span className={cn("text-[15px]", state === "active" && "shimmer-text")}>{s}</span>
-            </li>
-          );
-        })}
-      </ol>
+      <p className="mb-2 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">Your workspace starts blank</p>
+      <p className="text-sm leading-6 text-muted-foreground">Add your own verified experience and search preferences. Live progress and tailored jobs appear only after you start the agent.</p>
     </div>
   );
 }
@@ -66,13 +32,10 @@ export default function AuthPage() {
   const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
-    if (getDemoUser()) {
-      router.replace("/agent");
-    } else {
-      // Session storage is only available in the browser, so finish the initial check here.
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setCheckingSession(false);
-    }
+    return onAuthStateChanged(auth, (user) => {
+      if (user) router.replace("/agent");
+      else setCheckingSession(false);
+    });
   }, [router]);
 
   async function submit(e: React.FormEvent) {
@@ -80,10 +43,10 @@ export default function AuthPage() {
     setBusy(true);
     try {
       if (mode === "signin") {
-        demoSignIn(email);
+        await loginWithFirebaseEmail(email, password);
         router.replace("/agent");
       } else if (mode === "signup") {
-        demoSignIn(email, name);
+        await registerWithFirebaseEmail(name, email, password);
         router.replace("/agent");
       } else {
         setSent("Email recovery is not connected. Return to sign in to continue.");
@@ -95,10 +58,16 @@ export default function AuthPage() {
     }
   }
 
-  function oauth() {
+  async function oauth() {
     setBusy(true);
-    demoSignIn();
-    router.replace("/agent");
+    try {
+      await loginWithFirebaseGoogle();
+      router.replace("/agent");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Google sign-in failed");
+    } finally {
+      setBusy(false);
+    }
   }
 
   if (checkingSession) {
@@ -191,7 +160,7 @@ export default function AuthPage() {
                     value={name}
                     onChange={(e) => setName(e.target.value)}
                     className="h-12 rounded-xl px-4"
-                    placeholder="Joshua Onyeka"
+                    placeholder="Your full name"
                   />
                 </div>
               )}

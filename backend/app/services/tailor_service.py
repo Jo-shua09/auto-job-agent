@@ -14,7 +14,7 @@ from app.models.schemas import (
     JobRecord,
     JobStatus,
 )
-from app.services.profile_service import get_master_profile, clean_no_em_dash
+from app.services.profile_service import get_master_profile, clean_no_em_dash, has_verified_profile_content
 from app.services.pdf_compiler import compile_tailored_cv_pdf
 from app.services.state_machine import transition_job_state
 
@@ -66,55 +66,8 @@ def run_writer_agent(
     """Selects verified experiences/projects and tailors bullets, cover letter, and screening answers."""
     api_key = os.getenv("GEMINI_API_KEY")
 
-    # Deterministic fallback if no Gemini API key is configured
     if not api_key or api_key == "your_gemini_api_key_here":
-        role_words = {w.lower() for w in job.role_title.replace("/", " ").replace("-", " ").split() if len(w) > 1}
-        scored_projs = sorted(
-            profile.projects,
-            key=lambda p: sum(1 for tag in p.role_tags if any(w in tag.lower() for w in role_words)),
-            reverse=True,
-        )[:4]
-
-        return WriterDraftOutput(
-            target_role_headline=clean_no_em_dash(f"{job.role_title} ({job.matched_target_role})"),
-            tailored_summary=clean_no_em_dash(
-                f"Software Engineer specializing in {job.matched_target_role} with proven experience building "
-                f"production web, AI, and mobile platforms. Ready to contribute immediately to {job.company_name}."
-            ),
-            selected_experiences=[
-                TailoredBulletItem(item_id=e.id, rewritten_bullets=e.verified_bullets)
-                for e in profile.experiences
-            ],
-            selected_projects=[
-                TailoredBulletItem(item_id=p.id, rewritten_bullets=p.verified_bullets)
-                for p in scored_projs
-            ],
-            cover_letter_text=clean_no_em_dash(
-                f"Dear Hiring Team at {job.company_name},\n\n"
-                f"I am applying for the {job.role_title} position. As Lead Web & Mobile Developer at BoukarTech Solutions Ltd "
-                f"and a multiple-time 1st-place hackathon engineer, I have architected and shipped full-stack React, Next.js, "
-                f"TypeScript, AI, and Flutter applications that align directly with your engineering needs.\n\n"
-                f"In recent builds such as {scored_projs[0].name if scored_projs else 'AreaHustle'} and "
-                f"{scored_projs[1].name if len(scored_projs) > 1 else 'ResolveAI'}, I focused on clean component architecture, "
-                f"state machines, and reliable production execution.\n\n"
-                f"I would welcome the opportunity to discuss how my background fits the {job.role_title} role at {job.company_name}.\n\n"
-                f"Best regards,\n{profile.full_name}"
-            ),
-            screening_qa=[
-                ScreeningAnswerItem(
-                    question=f"Why do you want to work at {job.company_name}?",
-                    answer=f"I am excited by {job.company_name}'s product direction and the opportunity to ship high-impact {job.role_title} features.",
-                ),
-                ScreeningAnswerItem(
-                    question="Describe a complex technical project you built recently.",
-                    answer=f"I built {scored_projs[0].name if scored_projs else 'AreaHustle'}, implementing end-to-end state management and responsive UI architecture.",
-                ),
-                ScreeningAnswerItem(
-                    question="What is your notice period and location?",
-                    answer=f"{profile.application_defaults.get('notice_period', 'Immediate / 2 Weeks')} | Based in {profile.location}.",
-                ),
-            ],
-        )
+        raise ValueError("Set GEMINI_API_KEY before tailoring applications. No generated profile content will be substituted.")
 
     client = genai.Client(api_key=api_key)
     revision_clause = (
@@ -296,6 +249,8 @@ async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> di
             job.raw_jd_text = full_text
             job_doc_ref.update({"raw_jd_text": full_text})
     profile = MasterProfile.model_validate(get_master_profile(user_id))
+    if not profile.is_onboarded or not has_verified_profile_content(profile):
+        raise ValueError("Complete your name, email, and at least one verified experience, project, or skill before tailoring.")
 
     # Move state to TAILORING_IN_PROGRESS if coming from DISCOVERED or AWAITING_APPROVAL
     if job.status in {JobStatus.DISCOVERED, JobStatus.AWAITING_APPROVAL}:
@@ -318,7 +273,7 @@ async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> di
         profile=profile,
         package=package,
         target_role_title=package.target_role_headline,
-        filename_prefix=f"Joshua_Ituma_{safe_company}",
+        filename_prefix=f"tailored_{safe_company}",
     )
     package.cv_pdf_url = pdf_url
 

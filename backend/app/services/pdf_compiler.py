@@ -1,5 +1,6 @@
 import sys
 import asyncio
+from html import escape
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from app.models.schemas import MasterProfile, TailoredPackage
@@ -11,12 +12,12 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
     """Renders a clean, single-column ATS-optimized HTML resume."""
     experiences_html = ""
     for exp in package.selected_experiences:
-        bullets = "".join(f"<li>{b}</li>" for b in exp.verified_bullets)
+        bullets = "".join(f"<li>{escape(b)}</li>" for b in exp.verified_bullets)
         experiences_html += f"""
         <div class="item">
             <div class="row">
-                <span class="bold">{exp.role_title} — {exp.company}</span>
-                <span class="date">{exp.start_date} – {exp.end_date} | {exp.location}</span>
+                <span class="bold">{escape(exp.role_title)} - {escape(exp.company)}</span>
+                <span class="date">{escape(exp.start_date)} - {escape(exp.end_date)} | {escape(exp.location)}</span>
             </div>
             <ul>{bullets}</ul>
         </div>
@@ -24,13 +25,13 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
 
     projects_html = ""
     for proj in package.selected_projects:
-        bullets = "".join(f"<li>{b}</li>" for b in proj.verified_bullets)
-        tech_str = ", ".join(proj.tech_stack)
-        award_badge = f" <span class='award'>({proj.awards_or_metrics})</span>" if proj.awards_or_metrics else ""
+        bullets = "".join(f"<li>{escape(b)}</li>" for b in proj.verified_bullets)
+        tech_str = ", ".join(escape(skill) for skill in proj.tech_stack)
+        award_badge = f" <span class='award'>({escape(proj.awards_or_metrics)})</span>" if proj.awards_or_metrics else ""
         projects_html += f"""
         <div class="item">
             <div class="row">
-                <span class="bold">{proj.name}{award_badge}</span>
+                <span class="bold">{escape(proj.name)}{award_badge}</span>
                 <span class="tech">{tech_str}</span>
             </div>
             <ul>{bullets}</ul>
@@ -39,7 +40,20 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
 
     skills_rows = ""
     for category, skills in profile.skills_by_category.items():
-        skills_rows += f"<div><span class='bold'>{category}:</span> {', '.join(skills)}</div>"
+        skills_rows += f"<div><span class='bold'>{escape(category)}:</span> {', '.join(escape(skill) for skill in skills)}</div>"
+
+    education_html = "".join(
+        f"""
+        <div class="row">
+          <span class="bold">{escape(education.degree)} - {escape(education.institution)}</span>
+          <span class="date">{escape(education.dates)} | {escape(education.location)}</span>
+        </div>
+        """
+        for education in profile.education
+    )
+    contact_details = " &bull; ".join(
+        escape(value) for value in (profile.location, profile.email, profile.phone, profile.github_url, profile.portfolio_url, profile.linkedin_url) if value
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
@@ -106,16 +120,14 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
 </style>
 </head>
 <body>
-  <h1>{profile.full_name}</h1>
-  <div class="subtitle">{target_role_title}</div>
+  <h1>{escape(profile.full_name)}</h1>
+  <div class="subtitle">{escape(target_role_title)}</div>
   <div class="contact">
-    {profile.location} &bull; {profile.email} &bull; {profile.phone} &bull;
-    <a href="{profile.github_url}">{profile.github_url}</a> &bull;
-    <a href="{profile.portfolio_url}">{profile.portfolio_url}</a>
+    {contact_details}
   </div>
 
   <h2>Professional Summary</h2>
-  <div class="summary">{package.tailored_summary}</div>
+  <div class="summary">{escape(package.tailored_summary)}</div>
 
   <h2>Technical Skills</h2>
   <div class="skills-grid">{skills_rows}</div>
@@ -126,11 +138,7 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
   <h2>Featured Engineering & AI Projects</h2>
   {projects_html}
 
-  <h2>Education</h2>
-  <div class="row">
-    <span class="bold">B.Sc. in Computer Science — Lagos State University of Science and Technology (LASUSTECH)</span>
-    <span class="date">Lagos, Nigeria</span>
-  </div>
+  {f"<h2>Education</h2>{education_html}" if education_html else ""}
 </body>
 </html>"""
 
@@ -153,8 +161,8 @@ def _render_pdf_sync(html_content: str, output_path: str) -> None:
 async def compile_tailored_cv_pdf(
     profile: MasterProfile,
     package: TailoredPackage,
-    target_role_title: str = "Frontend & AI Engineer",
-    filename_prefix: str = "Joshua_Ituma_CV",
+    target_role_title: str = "",
+    filename_prefix: str = "tailored_cv",
 ) -> str:
     """Compiles the tailored package into a crisp ATS PDF and returns the file URL/path."""
     html_content = build_ats_cv_html(profile, package, target_role_title)

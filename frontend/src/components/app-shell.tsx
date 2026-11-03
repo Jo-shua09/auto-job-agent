@@ -3,8 +3,8 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarClock, ChevronDown, Inbox, LogOut, Moon, Settings2, ShieldCheck, Radar, Sun, PanelLeftClose, PanelLeftOpen, Minus, Plus } from "lucide-react";
-import { getDemoUser, demoSignOut, type DemoUser } from "@/lib/api";
+import { CalendarClock, ChevronDown, Inbox, LogOut, Moon, Settings2, ShieldCheck, Radar, Sun, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
   DropdownMenu,
@@ -17,8 +17,7 @@ import {
 import { BrandMark, BrandName } from "@/components/brand";
 import { OtpBanner } from "@/components/otp-banner";
 import { useTheme } from "@/lib/theme";
-import { useAgent, agent, loadAgent } from "@/lib/agent-store";
-import { appliedToday } from "@/lib/jobs";
+import { auth, logoutFirebaseUser, onAuthStateChanged } from "@/lib/firebase";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -29,10 +28,7 @@ const NAV = [
   { to: "/settings", label: "Settings", icon: Settings2 },
 ] as const;
 
-function QuotaRing({ size = 44 }: { size?: number }) {
-  const history = useAgent((s) => s.history);
-  const limit = useAgent((s) => s.limit);
-  const used = appliedToday(history);
+function QuotaRing({ size = 44, used = 0, limit = 10 }: { size?: number; used?: number; limit?: number }) {
   const r = size / 2 - 4;
   const c = 2 * Math.PI * r;
   const pct = Math.min(used / limit, 1);
@@ -47,29 +43,45 @@ function QuotaRing({ size = 44 }: { size?: number }) {
   );
 }
 
-function useUser() {
-  const [user, setUser] = useState<DemoUser | null>(null);
-  useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setUser(getDemoUser());
-  }, []);
-  return user;
-}
-
 export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, toggle } = useTheme();
-  const user = useUser();
-  const limit = useAgent((s) => s.limit);
-  const history = useAgent((s) => s.history);
-  const queueCount = useAgent((s) => s.queue.length);
+  const [user, setUser] = useState<{ name: string; email: string } | null>(null);
+  const [quota, setQuota] = useState({ applied_today: 0, daily_apply_limit: 10 });
+  const [queueCount, setQueueCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
-  useEffect(() => { loadAgent(); }, []);
+  useEffect(() => {
+    let active = true;
+    const refresh = async () => {
+      try {
+        const [currentQuota, queue] = await Promise.all([
+          apiRequest<{ applied_today: number; daily_apply_limit: number }>("/api/scout/quota"),
+          apiRequest<unknown[]>("/api/jobs?status=AWAITING_APPROVAL"),
+        ]);
+        if (active) {
+          setQuota(currentQuota);
+          setQueueCount(queue.length);
+        }
+      } catch (error) {
+        console.error("Could not load workspace summary", error);
+      }
+    };
+    const unsubscribe = onAuthStateChanged(auth, (current) => {
+      setUser(current ? { name: current.displayName ?? "", email: current.email ?? "" } : null);
+      if (current) void refresh();
+      else {
+        setQueueCount(0);
+        setQuota({ applied_today: 0, daily_apply_limit: 10 });
+      }
+    });
+    const timer = window.setInterval(() => { if (auth.currentUser) void refresh(); }, 15000);
+    return () => { active = false; unsubscribe(); window.clearInterval(timer); };
+  }, []);
   const display = user?.name || user?.email?.split("@")[0] || "You";
 
-  function signOut() {
-    demoSignOut();
+  async function signOut() {
+    await logoutFirebaseUser();
     router.replace("/auth");
   }
 
@@ -106,37 +118,17 @@ export function AppShell({ children }: { children: ReactNode }) {
             collapsed ? "mx-3 justify-center p-2" : "mx-4 gap-3 p-3",
           )}
         >
-          <QuotaRing size={collapsed ? 40 : 44} />
+          <QuotaRing size={collapsed ? 40 : 44} used={quota.applied_today} limit={quota.daily_apply_limit} />
           {!collapsed && (
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">Applied today</p>
               <p className="font-mono text-sm font-semibold">
-                {appliedToday(history)} <span className="text-muted-foreground">/ {limit}</span>
+                {quota.applied_today} <span className="text-muted-foreground">/ {quota.daily_apply_limit}</span>
               </p>
             </div>
           )}
           {!collapsed && (
             <div className="ml-auto flex flex-col">
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-6"
-                title="Increase daily limit"
-                aria-label="Increase daily limit"
-                onClick={() => agent.setLimit(limit + 1)}
-              >
-                <Plus />
-              </Button>
-              <Button
-                size="icon"
-                variant="ghost"
-                className="size-6"
-                title="Decrease daily limit"
-                aria-label="Decrease daily limit"
-                onClick={() => agent.setLimit(limit - 1)}
-              >
-                <Minus />
-              </Button>
             </div>
           )}
         </div>
@@ -221,7 +213,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <BrandName className="text-[15px]" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <QuotaRing size={36} />
+          <QuotaRing size={36} used={quota.applied_today} limit={quota.daily_apply_limit} />
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button

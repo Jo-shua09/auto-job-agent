@@ -150,8 +150,8 @@ def fill_standard_and_custom_fields_sync(
 
     filled_count = 0
     name_parts = profile.full_name.strip().split()
-    first_name = name_parts[0] if name_parts else "Joshua"
-    last_name = name_parts[-1] if len(name_parts) > 1 else "Ituma"
+    first_name = name_parts[0] if name_parts else ""
+    last_name = name_parts[-1] if len(name_parts) > 1 else ""
 
     # Step B: Upload the tailored PDF CV to the first resume file input
     if pdf_file_path.exists():

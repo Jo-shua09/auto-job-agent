@@ -2,21 +2,23 @@ from typing import List, Optional, Dict
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
-from app.core.firebase import get_user_ref
-from app.models.schemas import MasterProfile, TailoredPackage, JobStatus
+from app.core.firebase import current_tenant_id, get_user_ref
+from app.models.schemas import MasterProfile, ScoutPreferences, JobStatus
 from app.services.profile_service import (
-    seed_master_profile,
     get_master_profile,
+    save_master_profile,
     get_scout_preferences,
+    save_scout_preferences,
     update_target_roles,
     update_daily_apply_limit,
     get_daily_quota_status,
     parse_uploaded_cv_into_vault,
     clean_no_em_dash,
 )
-from app.services.pdf_compiler import compile_tailored_cv_pdf, GENERATED_PDF_DIR
+from app.services.pdf_compiler import GENERATED_PDF_DIR
 from app.services.scout_service import (
     run_scout_discovery,
     paste_and_ingest_job,
@@ -36,10 +38,8 @@ from app.services.applicator_service import (
     run_queued_applications_batch,
     get_execution_log,
 )
-import uuid
 from app.services.inbox_service import (
     poll_gmail_inbox_sync,
-    process_and_record_email_event,
     list_email_events,
 )
 from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Header, Depends
@@ -62,6 +62,27 @@ app.add_middleware(
 
 app.mount("/pdfs", StaticFiles(directory=str(GENERATED_PDF_DIR)), name="pdfs")
 
+@app.middleware("http")
+async def bind_firebase_tenant(request, call_next):
+    if not request.url.path.startswith("/api/") or request.method == "OPTIONS" or request.url.path in {
+        "/api/auth/session",
+        "/api/auth/register",
+        "/api/auth/login",
+    }:
+        return await call_next(request)
+    authorization = request.headers.get("authorization", "")
+    if not authorization.startswith("Bearer "):
+        return JSONResponse(status_code=401, content={"detail": "Sign in to access your workspace."})
+    try:
+        verified = verify_real_firebase_id_token(authorization[7:].strip())
+    except ValueError as exc:
+        return JSONResponse(status_code=401, content={"detail": str(exc)})
+    token = current_tenant_id.set(verified["user"]["user_id"])
+    try:
+        return await call_next(request)
+    finally:
+        current_tenant_id.reset(token)
+
 class UpdateRolesRequest(BaseModel):
     target_role_titles: List[str]
     preferred_locations: List[str] | None = None
@@ -78,7 +99,7 @@ class PasteAnyJobRequest(BaseModel):
     raw_jd_text: Optional[str] = None
     company_name: Optional[str] = None
     role_title: Optional[str] = None
-    auto_queue_for_apply: bool = True
+    auto_queue_for_apply: bool = False
 
 class UpdateScreeningAnswersRequest(BaseModel):
     cover_letter_text: Optional[str] = None
@@ -89,28 +110,25 @@ class SubmitOTPRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    user_ref = get_user_ref()
-    user_ref.set({"status": "active", "agent_mode": "95_PERCENT_AUTO"}, merge=True)
-    return {"status": "ok", "firestore_connected": True, "tenant": user_ref.id}
+    return {"status": "ok", "firestore_connected": True}
 
 # --- PHASE 2: VAULT, ROLES & DAILY LIMIT ENDPOINTS ---
-
-@app.post("/api/vault/seed")
-def seed_vault():
-    log_agent_step(
-        "Master Vault Initialized",
-        "Loaded your verified experiences, projects, and target role preferences.",
-        phase="VAULT",
-    )
-    return seed_master_profile()
 
 @app.get("/api/vault")
 def read_vault():
     return get_master_profile()
 
+@app.put("/api/vault")
+def write_vault(profile: MasterProfile):
+    return save_master_profile(profile)
+
 @app.get("/api/scout/preferences")
 def read_scout_preferences():
     return get_scout_preferences()
+
+@app.put("/api/scout/preferences")
+def write_scout_preferences(preferences: ScoutPreferences):
+    return save_scout_preferences(preferences)
 
 @app.post("/api/scout/preferences/roles")
 def set_custom_target_roles(req: UpdateRolesRequest):
@@ -136,7 +154,7 @@ def read_daily_quota():
 
 @app.post("/api/vault/upload-cv")
 async def upload_base_cv(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
+    if not file.filename or not file.filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
     log_agent_step(
         "Extracting Uploaded Base CV",
@@ -144,56 +162,22 @@ async def upload_base_cv(file: UploadFile = File(...)):
         phase="VAULT",
     )
     pdf_bytes = await file.read()
-    parsed = parse_uploaded_cv_into_vault(pdf_bytes)
+    try:
+        parsed = parse_uploaded_cv_into_vault(pdf_bytes)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"status": "parsed_and_saved", "profile": parsed}
-
-@app.post("/api/vault/test-pdf")
-async def test_compile_pdf(
-    custom_role_title: str = Query(default="AI Frontend Engineer (Next.js / TypeScript)")
-):
-    raw_profile = get_master_profile()
-    profile = MasterProfile.model_validate(raw_profile)
-    custom_role_title = clean_no_em_dash(custom_role_title)
-
-    role_words = {w.lower() for w in custom_role_title.replace("/", " ").replace("-", " ").split() if len(w) > 1}
-    scored_projs = sorted(
-        profile.projects,
-        key=lambda p: sum(1 for tag in p.role_tags if any(w in tag.lower() for w in role_words)),
-        reverse=True,
-    )
-    selected_projs = scored_projs[:4]
-
-    sample_package = TailoredPackage(
-        job_id="custom_role_preview",
-        user_id=profile.user_id,
-        target_role_headline=custom_role_title,
-        tailored_summary=clean_no_em_dash(
-            f"Software Engineer specializing in {custom_role_title} with hands-on experience shipping "
-            "production web applications, AI-driven workflows, and cross-platform mobile software."
-        ),
-        selected_experiences=profile.experiences,
-        selected_projects=selected_projs,
-        critic_score=96,
-    )
-
-    pdf_url = await compile_tailored_cv_pdf(
-        profile=profile,
-        package=sample_package,
-        target_role_title=custom_role_title,
-        filename_prefix=f"Joshua_Ituma_{custom_role_title[:25]}",
-    )
-
-    return {
-        "status": "compiled",
-        "target_role": custom_role_title,
-        "selected_projects": [p.name for p in selected_projs],
-        "preview_url": f"http://localhost:8000{pdf_url}",
-    }
 
 # --- PHASE 3: THE SCOUT & PASTE-ANY-JOB ENDPOINTS ---
 
 @app.post("/api/scout/run")
 async def trigger_scout_run(req: RunScoutRequest):
+    profile = get_master_profile()
+    preferences = ScoutPreferences.model_validate(get_scout_preferences())
+    if not profile.get("is_onboarded"):
+        raise HTTPException(status_code=400, detail="Complete and save your Master Vault before running the Scout.")
+    if not any(role.active for role in preferences.target_roles):
+        raise HTTPException(status_code=400, detail="Add and activate at least one target role before running the Scout.")
     log_agent_step(
         "Scanning Job Platforms & ATS Boards",
         "Searching across 15+ ATS domains and global remote feeds for your active roles...",
@@ -215,6 +199,12 @@ async def trigger_scout_run(req: RunScoutRequest):
 @app.post("/api/scout/paste-job")
 async def paste_any_job_to_apply(req: PasteAnyJobRequest):
     try:
+        profile = get_master_profile()
+        preferences = ScoutPreferences.model_validate(get_scout_preferences())
+        if not profile.get("is_onboarded"):
+            raise HTTPException(status_code=400, detail="Complete and save your Master Vault before tailoring a job.")
+        if not any(role.active for role in preferences.target_roles):
+            raise HTTPException(status_code=400, detail="Add and activate at least one target role before tailoring a job.")
         log_agent_step(
             "Analyzing Pasted Job Opportunity",
             "Extracting company details, role requirements, and scoring tech stack alignment...",
@@ -408,37 +398,12 @@ def list_jobs_waiting_for_otp():
     """Returns any jobs currently paused in WAITING_FOR_OTP so the UI can pop up the OTP input modal."""
     return list_discovered_jobs(status_filter=JobStatus.WAITING_FOR_OTP)
 
-class SimulateEmailRequest(BaseModel):
-    sender: str = Field(default="careers@linear.app", description="Recruiter or ATS sender email")
-    subject: str = Field(
-        default="Invitation to Interview: Senior AI Frontend Engineer at Linear",
-        description="Email subject line",
-    )
-    snippet: str = Field(
-        default="Hi Joshua, our engineering team reviewed your application and AreaHustle/ResolveAI builds. We would love to schedule a 30-minute technical intro call this week.",
-        description="Email body snippet",
-    )
-
 # --- PHASE 7: GMAIL INBOX WATCHER & LIFECYCLE TRACKER ---
 
 @app.post("/api/inbox/poll")
 def trigger_gmail_inbox_poll(max_emails: int = Query(default=10, ge=1, le=50)):
     """Polls Gmail Inbox in read-only mode, classifies recruiter replies, and updates job statuses."""
     return poll_gmail_inbox_sync(max_emails=max_emails)
-
-@app.post("/api/inbox/simulate-email")
-def simulate_incoming_recruiter_email(req: SimulateEmailRequest):
-    """
-    Test endpoint: Simulates receiving a Confirmation, Assessment, Interview Invite, or Rejection email
-    from an applied company and automatically transitions the job state in Firestore!
-    """
-    msg_id = f"sim_email_{uuid.uuid4().hex[:8]}"
-    return process_and_record_email_event(
-        message_id=msg_id,
-        sender=req.sender,
-        subject=req.subject,
-        snippet=req.snippet,
-    )
 
 @app.get("/api/inbox/events")
 def read_tracked_email_events():
@@ -452,9 +417,9 @@ class FirebaseTokenRequest(BaseModel):
     full_name: Optional[str] = Field(default=None, description="Optional display name during initial registration")
 
 class EmailPasswordAuthRequest(BaseModel):
-    email: str = Field(default="joshua@boukartech.com")
-    password: str = Field(min_length=6, default="vanguard2026")
-    full_name: Optional[str] = Field(default="Joshua Onyeka Ituma")
+    email: str
+    password: str = Field(min_length=6)
+    full_name: Optional[str] = None
 
 @app.post("/api/auth/session")
 def establish_firebase_session(req: FirebaseTokenRequest):

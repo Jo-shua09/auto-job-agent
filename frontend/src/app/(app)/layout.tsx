@@ -3,19 +3,17 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { AppShell } from "@/components/app-shell";
-import { getDemoUser } from "@/lib/api";
+import { auth, onAuthStateChanged } from "@/lib/firebase";
 
 export default function AuthenticatedLayout({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    if (!getDemoUser()) {
-      router.replace("/auth");
-      return;
-    }
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setReady(true);
+    return onAuthStateChanged(auth, (user) => {
+      if (!user) router.replace("/auth");
+      else setReady(true);
+    });
   }, [router]);
 
   if (!ready) return null;

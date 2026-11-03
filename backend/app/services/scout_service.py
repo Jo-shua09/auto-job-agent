@@ -51,7 +51,9 @@ def compute_dedup_hash(company: str, role_title: str) -> str:
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
 
 def detect_ats_platform(url: str) -> ATSPlatform:
-    if not url or url.startswith("mailto:"):
+    if not url:
+        return ATSPlatform.CUSTOM
+    if url.startswith("mailto:"):
         return ATSPlatform.EMAIL_APPLY
     host = urlparse(url).netloc.lower()
     mapping = {
@@ -137,15 +139,19 @@ def score_job_with_gemini(
     profile: MasterProfile,
     prefs: ScoutPreferences,
 ) -> JDMatchEvaluation:
-    active_roles = [r.title for r in prefs.target_roles if r.active] or ["Software Engineer"]
+    provided_company = "" if company == "AUTO_DETECT" else company
+    provided_role = "" if role_title == "AUTO_DETECT" else role_title
+    active_roles = [r.title for r in prefs.target_roles if r.active]
+    if not active_roles:
+        raise ValueError("Configure at least one active target role before scoring jobs.")
     all_skills = [skill for skills in profile.skills_by_category.values() for skill in skills]
 
     jd_lower = jd_text.lower()
     for exc in prefs.excluded_keywords:
         if exc.lower() in jd_lower:
             return JDMatchEvaluation(
-                extracted_company_name=company or "Unknown Company",
-                extracted_role_title=role_title or active_roles[0],
+                extracted_company_name=provided_company,
+                extracted_role_title=provided_role,
                 match_score=15,
                 matched_target_role=active_roles[0],
                 location_type="UNKNOWN",
@@ -160,16 +166,21 @@ def score_job_with_gemini(
         score = min(95, 58 + len(matched_skills) * 6)
         best_role = active_roles[0]
         for r in active_roles:
-            if any(w.lower() in (role_title or jd_text[:200]).lower() for w in r.split() if len(w) > 2):
+            if any(w.lower() in (provided_role or jd_text[:200]).lower() for w in r.split() if len(w) > 2):
                 best_role = r
                 score = min(98, score + 10)
                 break
         return JDMatchEvaluation(
-            extracted_company_name=company or "Tech Company",
-            extracted_role_title=role_title or best_role,
+            extracted_company_name=provided_company,
+            extracted_role_title=provided_role,
             match_score=score,
             matched_target_role=best_role,
-            location_type="REMOTE" if "remote" in jd_lower else "HYBRID",
+            location_type=(
+                "REMOTE" if "remote" in jd_lower
+                else "HYBRID" if "hybrid" in jd_lower
+                else "ONSITE" if any(term in jd_lower for term in ("on-site", "onsite", "on site", "in person"))
+                else "UNKNOWN"
+            ),
             has_hard_blocker=False,
             match_reasoning=f"Matched {len(matched_skills)} core skills from your Master Vault ({', '.join(matched_skills[:5])}).",
         )
@@ -182,7 +193,10 @@ def score_job_with_gemini(
     CANDIDATE LOCATION: {profile.location}
     ACTIVE TARGET ROLES: {active_roles}
     PREFERRED LOCATIONS: {prefs.preferred_locations}
+    ACCEPTED WORK MODES: {prefs.work_modes}
     EXCLUDED KEYWORDS: {prefs.excluded_keywords}
+    Match only roles compatible with the user's preferred locations and work modes.
+    If no preferred locations or work modes are configured, do not apply a location restriction.
     CANDIDATE SKILLS: {all_skills}
 
     PROVIDED COMPANY: {company}
@@ -193,7 +207,8 @@ def score_job_with_gemini(
     STRICT RULES:
     1. Set has_hard_blocker = True ONLY if the job strictly requires residing outside Nigeria without remote flexibility, or requires US/UK citizenship/security clearance.
     2. Score 80-100 if the tech stack overlaps with React, Next.js, TypeScript, AI SDK/LLMs, or Flutter/Dart.
-    3. Never use long em-dashes (—) or en-dashes (–). Use standard hyphens (-) only.
+    3. Respect the preferred locations and work modes when evaluating fit.
+    4. Never use long em-dashes (—) or en-dashes (–). Use standard hyphens (-) only.
     """
 
     try:
@@ -211,16 +226,8 @@ def score_job_with_gemini(
         result.extracted_company_name = clean_no_em_dash(result.extracted_company_name)
         result.extracted_role_title = clean_no_em_dash(result.extracted_role_title)
         return result
-    except Exception as e:
-        return JDMatchEvaluation(
-            extracted_company_name=company if company != "AUTO_DETECT" else "Tech Company",
-            extracted_role_title=role_title if role_title != "AUTO_DETECT" else active_roles[0],
-            match_score=78,
-            matched_target_role=active_roles[0],
-            location_type="REMOTE",
-            has_hard_blocker=False,
-            match_reasoning=f"Keyword match passed (Gemini fallback: {str(e)[:60]}).",
-        )
+    except Exception as exc:
+        raise ValueError(f"Could not evaluate this job with the configured matching service: {exc}") from exc
 
 # --- 3. MULTI-PLATFORM DISCOVERY SOURCES ---
 
@@ -233,7 +240,7 @@ async def fetch_from_remotive(role_queries: List[str], limit: int = 6) -> List[d
             if word in rq.lower():
                 search_terms.add(word)
     if not search_terms:
-        search_terms = {"frontend", "flutter"}
+        search_terms = {query.strip() for query in role_queries if query.strip()}
 
     async with httpx.AsyncClient(timeout=15.0) as client:
         for term in list(search_terms)[:3]:
@@ -244,13 +251,16 @@ async def fetch_from_remotive(role_queries: List[str], limit: int = 6) -> List[d
                 )
                 if resp.status_code == 200:
                     for j in resp.json().get("jobs", [])[:limit]:
-                        discovered.append({
-                            "company_name": j.get("company_name", "Unknown Company"),
-                            "role_title": j.get("title", "Software Engineer"),
-                            "external_url": j.get("url", ""),
-                            "location_type": f"REMOTE ({j.get('candidate_required_location', 'Worldwide')})",
-                            "raw_jd_text": clean_html_to_text(j.get("description", "")),
-                        })
+                        company = j.get("company_name", "").strip()
+                        title = j.get("title", "").strip()
+                        if company and title:
+                            discovered.append({
+                                "company_name": company,
+                                "role_title": title,
+                                "external_url": j.get("url", ""),
+                                "location_type": f"REMOTE ({j.get('candidate_required_location', '')})".strip(),
+                                "raw_jd_text": clean_html_to_text(j.get("description", "")),
+                            })
             except Exception:
                 continue
     return discovered
@@ -259,9 +269,6 @@ async def fetch_from_arbeitnow(role_queries: List[str], limit: int = 6) -> List[
     """Source 2: Arbeitnow Global Remote & Visa-Sponsoring Tech Feed (Zero API Key)."""
     discovered = []
     keywords = {w.lower() for rq in role_queries for w in rq.replace("/", " ").split() if len(w) > 2}
-    if not keywords:
-        keywords = {"frontend", "react", "flutter", "ai"}
-
     async with httpx.AsyncClient(timeout=15.0) as client:
         try:
             resp = await client.get("https://www.arbeitnow.com/api/job-board-api")
@@ -270,11 +277,15 @@ async def fetch_from_arbeitnow(role_queries: List[str], limit: int = 6) -> List[
                     title_low = j.get("title", "").lower()
                     tags_low = " ".join(j.get("tags", [])).lower()
                     if any(k in title_low or k in tags_low for k in keywords):
+                        company = j.get("company_name", "").strip()
+                        title = j.get("title", "").strip()
+                        if not company or not title:
+                            continue
                         discovered.append({
-                            "company_name": j.get("company_name", "Tech Company"),
-                            "role_title": j.get("title", "Software Engineer"),
+                            "company_name": company,
+                            "role_title": title,
                             "external_url": j.get("url", ""),
-                            "location_type": "REMOTE" if j.get("remote") else j.get("location", "HYBRID"),
+                            "location_type": "REMOTE" if j.get("remote") else j.get("location", "UNKNOWN"),
                             "raw_jd_text": clean_html_to_text(j.get("description", "")),
                         })
                         if len(discovered) >= limit:
@@ -306,7 +317,13 @@ async def fetch_from_serper_ats_dorks(
         for role in role_queries[:3]:
             for batch in domain_batches[:2]:
                 site_clause = " OR ".join(f"site:{d}" for d in batch)
-                dork_query = f'({site_clause}) "{role}" ("Remote" OR "Lagos" OR "Nigeria" OR "Anywhere" OR "EMEA")'
+                location_clause = ""
+                if prefs.preferred_locations:
+                    location_clause = " (" + " OR ".join(f'"{location}"' for location in prefs.preferred_locations) + ")"
+                mode_clause = ""
+                if prefs.work_modes:
+                    mode_clause = " (" + " OR ".join(f'"{mode.lower()}"' for mode in prefs.work_modes) + ")"
+                dork_query = f'({site_clause}) "{role}"{location_clause}{mode_clause}'
                 try:
                     resp = await client.post(
                         "https://google.serper.dev/search",
@@ -325,11 +342,13 @@ async def fetch_from_serper_ats_dorks(
                                 parts = title_raw.split(" - ", 1)
                                 r_title, co_name = parts[0].strip(), parts[1].strip()
                             else:
-                                r_title, co_name = title_raw.strip(), urlparse(link).path.strip("/").split("/")[0].title()
+                                r_title, co_name = title_raw.strip(), ""
 
+                            if not co_name or not r_title:
+                                continue
                             discovered.append({
-                                "company_name": co_name or "Tech Company",
-                                "role_title": r_title or role,
+                                "company_name": co_name,
+                                "role_title": r_title,
                                 "external_url": link,
                                 "location_type": "REMOTE",
                                 "raw_jd_text": clean_html_to_text(f"{title_raw}\n{snippet}"),
@@ -338,7 +357,11 @@ async def fetch_from_serper_ats_dorks(
                     continue
     return discovered
 
-async def fetch_from_jsearch(role_queries: List[str], limit_per_role: int = 5) -> List[dict]:
+async def fetch_from_jsearch(
+    role_queries: List[str],
+    prefs: ScoutPreferences,
+    limit_per_role: int = 5,
+) -> List[dict]:
     """Source 4: JSearch Aggregator (pulls LinkedIn, Indeed, Glassdoor, ZipRecruiter)."""
     jsearch_key = os.getenv("JSEARCH_API_KEY")
     if not jsearch_key:
@@ -348,21 +371,27 @@ async def fetch_from_jsearch(role_queries: List[str], limit_per_role: int = 5) -
     async with httpx.AsyncClient(timeout=15.0) as client:
         for role in role_queries[:2]:
             try:
+                search_context = " ".join([*prefs.preferred_locations, *prefs.work_modes])
+                query = f"{role} {search_context}".strip()
                 resp = await client.get(
                     "https://jsearch.p.rapidapi.com/search",
                     headers={
                         "X-RapidAPI-Key": jsearch_key,
                         "X-RapidAPI-Host": "jsearch.p.rapidapi.com",
                     },
-                    params={"query": f"{role} Remote", "page": "1", "num_pages": "1", "date_posted": "week"},
+                    params={"query": query, "page": "1", "num_pages": "1", "date_posted": "week"},
                 )
                 if resp.status_code == 200:
                     for item in resp.json().get("data", [])[:limit_per_role]:
+                        company = item.get("employer_name", "").strip()
+                        title = item.get("job_title", "").strip()
+                        if not company or not title:
+                            continue
                         discovered.append({
-                            "company_name": item.get("employer_name", "Unknown"),
-                            "role_title": item.get("job_title", role),
+                            "company_name": company,
+                            "role_title": title,
                             "external_url": item.get("job_apply_link") or item.get("job_google_link", ""),
-                            "location_type": "REMOTE" if item.get("job_is_remote") else "ONSITE",
+                            "location_type": "REMOTE" if item.get("job_is_remote") else "UNKNOWN",
                             "raw_jd_text": clean_html_to_text(item.get("job_description", "")),
                         })
             except Exception:
@@ -387,7 +416,7 @@ async def run_scout_discovery(
         else [r.title for r in prefs.target_roles if r.active]
     )
     if not active_role_titles:
-        active_role_titles = ["Frontend Engineer", "AI Frontend Engineer", "Flutter Mobile Developer"]
+        raise ValueError("Configure at least one active target role before running the Scout.")
 
     jobs_col = user_ref.collection("jobs")
     existing_hashes = set()
@@ -401,7 +430,7 @@ async def run_scout_discovery(
 
     raw_candidates = []
     raw_candidates.extend(await fetch_from_serper_ats_dorks(active_role_titles, prefs))
-    raw_candidates.extend(await fetch_from_jsearch(active_role_titles))
+    raw_candidates.extend(await fetch_from_jsearch(active_role_titles, prefs))
     raw_candidates.extend(await fetch_from_remotive(active_role_titles, limit=max_jobs_to_score))
     raw_candidates.extend(await fetch_from_arbeitnow(active_role_titles, limit=max_jobs_to_score))
 
@@ -439,7 +468,14 @@ async def run_scout_discovery(
 
         initial_status = (
             JobStatus.ARCHIVED_LOW_MATCH
-            if (evaluation.has_hard_blocker or evaluation.match_score < prefs.min_match_score)
+            if (
+                evaluation.has_hard_blocker
+                or evaluation.match_score < prefs.min_match_score
+                or (
+                    prefs.work_modes
+                    and evaluation.location_type.upper() not in prefs.work_modes
+                )
+            )
             else JobStatus.DISCOVERED
         )
 
@@ -486,7 +522,7 @@ async def paste_and_ingest_job(
     raw_jd_text: Optional[str] = None,
     company_name: Optional[str] = None,
     role_title: Optional[str] = None,
-    auto_queue_for_apply: bool = True,
+    auto_queue_for_apply: bool = False,
     user_id: Optional[str] = None,
 ) -> dict:
     """
@@ -503,7 +539,7 @@ async def paste_and_ingest_job(
     prefs = ScoutPreferences.model_validate(get_scout_preferences(user_id))
     quota = get_daily_quota_status(user_id)
 
-    norm_url = normalize_job_url(external_url) if external_url else f"https://manual-paste.local/{uuid.uuid4().hex[:8]}"
+    norm_url = normalize_job_url(external_url) if external_url else ""
     jd_content = raw_jd_text.strip() if (raw_jd_text and raw_jd_text.strip()) else await fetch_job_page_text(norm_url)
 
     evaluation = score_job_with_gemini(
@@ -514,8 +550,12 @@ async def paste_and_ingest_job(
         prefs=prefs,
     )
 
-    final_company = clean_no_em_dash(company_name or evaluation.extracted_company_name or "Tech Company")
-    final_role = clean_no_em_dash(role_title or evaluation.extracted_role_title or "Software Engineer")
+    final_company_value = company_name or evaluation.extracted_company_name
+    final_role_value = role_title or evaluation.extracted_role_title
+    if not final_company_value or not final_role_value:
+        raise ValueError("The company and role could not be identified. Add them explicitly or configure the job analysis service.")
+    final_company = clean_no_em_dash(final_company_value)
+    final_role = clean_no_em_dash(final_role_value)
     d_hash = compute_dedup_hash(final_company, final_role)
 
     # Determine status based on auto_queue_for_apply and daily limit
@@ -634,12 +674,21 @@ def get_applied_jobs_grouped_by_day(user_id: Optional[str] = None) -> dict:
 
         pkg = packages_map.get(j["id"], {})
         cv_path = pkg.get("cv_pdf_url")
+        execution_snap = user_ref.collection("execution_logs").document(j["id"]).get()
+        execution = execution_snap.to_dict() if execution_snap.exists else {}
+        screenshot_path = execution.get("screenshot_url")
         j_enriched = {
             **j,
             "applied_day_key": day_key,
             "applied_day_label": day_label,
             "applied_time_label": time_label,
             "cv_preview_url": f"http://localhost:8000{cv_path}" if cv_path else None,
+            "screenshot_url": (
+                screenshot_path
+                if not screenshot_path or screenshot_path.startswith("http")
+                else f"http://localhost:8000{screenshot_path}"
+            ),
+            "last_email_category": j.get("last_email_category"),
             "cover_letter_text": pkg.get("cover_letter_text"),
             "critic_score": pkg.get("critic_score"),
         }

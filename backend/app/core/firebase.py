@@ -1,4 +1,5 @@
 import os
+from contextvars import ContextVar
 import firebase_admin
 from firebase_admin import credentials, firestore, storage
 from dotenv import load_dotenv
@@ -24,8 +25,11 @@ if not firebase_admin._apps:
 
 db = firestore.client()
 bucket = storage.bucket()
+current_tenant_id: ContextVar[str | None] = ContextVar("current_tenant_id", default=None)
 
 def get_user_ref(user_id: str | None = None):
     """Returns the root Firestore document reference for a tenant (SaaS-ready)."""
-    uid = user_id or os.getenv("DEFAULT_USER_ID", "joshua_master_tenant")
+    uid = user_id or current_tenant_id.get()
+    if not uid:
+        raise RuntimeError("A signed-in Firebase tenant is required.")
     return db.collection("users").document(uid)

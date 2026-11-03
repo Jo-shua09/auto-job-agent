@@ -6,21 +6,10 @@ from fastapi import Header, HTTPException
 from firebase_admin import auth as firebase_auth
 
 from app.core.firebase import db, get_user_ref
-from app.services.profile_service import seed_master_profile, clean_no_em_dash
+from app.services.profile_service import clean_no_em_dash
 
-DEFAULT_TENANT = os.getenv("DEFAULT_USER_ID", "joshua_master_tenant")
-MASTER_EMAILS = {
-    os.getenv("MASTER_USER_EMAIL", "joshua@boukartech.com").lower(),
-}
-
-def resolve_tenant_uid(firebase_uid: str, email: str) -> str:
-    """
-    Maps Joshua's owner email to 'joshua_master_tenant' so your existing Vault & Jobs
-    are always preserved, while giving every other SaaS user their own real Firebase UID!
-    """
-    email_low = (email or "").strip().lower()
-    if email_low in MASTER_EMAILS or "joshua" in email_low:
-        return DEFAULT_TENANT
+def resolve_tenant_uid(firebase_uid: str, email: str = "") -> str:
+    """Keep every account's Firestore data isolated by its Firebase UID."""
     return firebase_uid
 
 def sync_firebase_user_to_firestore(
@@ -30,8 +19,7 @@ def sync_firebase_user_to_firestore(
     photo_url: Optional[str] = None,
 ) -> dict:
     """
-    Creates or updates the user's Firestore tenant document (`users/{uid}`)
-    and seeds their starter Master Vault if they are a brand-new user.
+    Creates or updates the user's Firestore tenant document (`users/{uid}`).
     """
     tenant_uid = resolve_tenant_uid(firebase_uid, email)
     user_ref = get_user_ref(tenant_uid)
@@ -48,7 +36,7 @@ def sync_firebase_user_to_firestore(
         "email": email.lower(),
         "full_name": display_name,
         "photo_url": photo_url or existing.get("photo_url"),
-        "role": "owner" if tenant_uid == DEFAULT_TENANT else "member",
+        "role": existing.get("role", "member"),
         "agent_mode": existing.get("agent_mode", "95_PERCENT_AUTO"),
         "last_login_at": datetime.now(timezone.utc).isoformat(),
     }
@@ -56,17 +44,6 @@ def sync_firebase_user_to_firestore(
         user_payload["created_at"] = datetime.now(timezone.utc).isoformat()
 
     user_ref.set(user_payload, merge=True)
-
-    # Auto-seed starter Vault & Scout Preferences if this user doesn't have one yet
-    vault_snap = user_ref.collection("vault").document("master_profile").get()
-    if not vault_snap.exists:
-        seed_master_profile(tenant_uid)
-        # If it's a new SaaS user (not Joshua), update the seeded profile name & email to theirs
-        if tenant_uid != DEFAULT_TENANT:
-            user_ref.collection("vault").document("master_profile").set(
-                {"full_name": display_name, "email": email.lower(), "user_id": tenant_uid},
-                merge=True,
-            )
 
     return user_payload
 
@@ -97,25 +74,15 @@ def verify_real_firebase_id_token(id_token: str) -> dict:
     }
 
 async def get_current_user(authorization: Optional[str] = Header(default=None)) -> dict:
-    """
-    FastAPI Dependency: Extracts and verifies the real Firebase Bearer token from the request header.
-    If called from local Swagger /docs without a header during dev, falls back to DEFAULT_TENANT.
-    """
+    """FastAPI dependency that requires a real Firebase ID token."""
     if not authorization or not authorization.startswith("Bearer "):
-        # Fallback for local /docs testing if no Bearer header is attached
-        return {
-            "user_id": DEFAULT_TENANT,
-            "email": os.getenv("MASTER_USER_EMAIL", "joshua@boukartech.com"),
-            "full_name": "Joshua Onyeka Ituma",
-            "role": "owner",
-        }
-
-    token = authorization.replace("Bearer ", "").strip()
+        raise HTTPException(status_code=401, detail="A Firebase bearer token is required.")
+    token = authorization.replace("Bearer ", "", 1).strip()
     try:
         verified = verify_real_firebase_id_token(token)
         return verified["user"]
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+    except ValueError as exc:
+        raise HTTPException(status_code=401, detail=str(exc))
 
 # --- OPTIONAL: REST API SIGN-IN/SIGN-UP FOR TESTING DIRECTLY IN SWAGGER /DOCS ---
 

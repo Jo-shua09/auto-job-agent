@@ -9,9 +9,6 @@ from google.genai import types
 from app.core.firebase import get_user_ref
 from app.models.schemas import (
     MasterProfile,
-    ExperienceItem,
-    ProjectItem,
-    EducationItem,
     ScoutPreferences,
     TargetRoleConfig,
 )
@@ -29,31 +26,26 @@ def clean_no_em_dash(value: Any) -> Any:
         return {k: clean_no_em_dash(v) for k, v in value.items()}
     return value
 
+def has_verified_profile_content(profile: MasterProfile) -> bool:
+    has_experience = any(
+        item.company.strip()
+        and item.role_title.strip()
+        and any(bullet.strip() for bullet in item.verified_bullets)
+        for item in profile.experiences
+    )
+    has_project = any(
+        item.name.strip()
+        and any(bullet.strip() for bullet in item.verified_bullets)
+        for item in profile.projects
+    )
+    has_skills = any(any(skill.strip() for skill in skills) for skills in profile.skills_by_category.values())
+    return bool(profile.full_name.strip() and profile.email.strip() and (has_experience or has_project or has_skills))
+
 # --- TARGET ROLES & SCOUT PREFERENCES ---
 
-def get_default_scout_preferences(user_id: str = "joshua_master_tenant") -> ScoutPreferences:
+def get_default_scout_preferences(user_id: str) -> ScoutPreferences:
     return ScoutPreferences(
         user_id=user_id,
-        target_roles=[
-            TargetRoleConfig(
-                id="role_frontend_react",
-                title="Frontend Engineer (React / Next.js)",
-                active=True,
-                priority_keywords=["React", "Next.js", "TypeScript", "Tailwind CSS"],
-            ),
-            TargetRoleConfig(
-                id="role_ai_frontend",
-                title="AI Frontend Engineer",
-                active=True,
-                priority_keywords=["Next.js", "AI SDK", "LLM", "TypeScript", "Agentic UI"],
-            ),
-            TargetRoleConfig(
-                id="role_flutter_mobile",
-                title="Flutter Mobile Developer",
-                active=True,
-                priority_keywords=["Flutter", "Dart", "Mobile", "iOS", "Android"],
-            ),
-        ],
     )
 
 def get_scout_preferences(user_id: str | None = None) -> dict:
@@ -61,9 +53,7 @@ def get_scout_preferences(user_id: str | None = None) -> dict:
     doc_ref = user_ref.collection("vault").document("scout_preferences")
     snap = doc_ref.get()
     if not snap.exists:
-        prefs = get_default_scout_preferences(user_ref.id).model_dump(mode="json")
-        doc_ref.set(prefs)
-        return prefs
+        return get_default_scout_preferences(user_ref.id).model_dump(mode="json")
     return snap.to_dict()
 
 def update_target_roles(role_titles: List[str], preferred_locations: List[str] | None = None, user_id: str | None = None) -> dict:
@@ -135,190 +125,29 @@ def get_daily_quota_status(user_id: str | None = None) -> dict:
 
 # --- MASTER PROFILE VAULT ---
 
-def get_default_master_profile(user_id: str = "joshua_master_tenant") -> MasterProfile:
-    """Returns the verified Master Profile Vault with zero long dashes and concrete facts."""
-    return MasterProfile(
-        user_id=user_id,
-        full_name="Joshua Onyeka Ituma",
-        email="joshua@boukartech.com",
-        phone="+234 000 000 0000",
-        location="Lagos, Nigeria (Open to Remote)",
-        portfolio_url="https://boukartech.com",
-        github_url="https://github.com/BoukarTech",
-        linkedin_url="https://linkedin.com/in/joshua-ituma",
-        summary_template=(
-            "Software Engineer specializing in React, Next.js, TypeScript, and Flutter. "
-            "Experienced in building production web platforms, cross-platform mobile apps, and AI-driven interfaces."
-        ),
-        experiences=[
-            ExperienceItem(
-                id="exp_boukartech",
-                company="BoukarTech Solutions Ltd",
-                role_title="Lead Web Developer & Team Lead",
-                location="Lagos, Nigeria",
-                start_date="Feb 2026",
-                end_date="Present",
-                role_tags=["Frontend", "React", "Next.js", "AI", "Flutter", "Mobile", "Full-Stack", "Team Lead"],
-                verified_bullets=[
-                    "Architected and shipped responsive web applications and mobile software using Next.js (App Router), React, TypeScript, Tailwind CSS, and Flutter.",
-                    "Led engineering execution across client projects, establishing reusable Figma-to-code component libraries and state management patterns.",
-                    "Integrated LLM workflows and structured AI responses into web applications using the Vercel AI SDK, Gemini API, and Supabase.",
-                ],
-                tech_used=["Next.js", "React", "TypeScript", "Tailwind CSS", "Flutter", "Dart", "Supabase", "Vercel AI SDK"],
-            ),
-            ExperienceItem(
-                id="exp_cavista",
-                company="Cavista Technologies",
-                role_title="Software Engineering Intern",
-                location="Ilupeju, Lagos",
-                start_date="Jul 2026",
-                end_date="Aug 2026",
-                role_tags=["Frontend", "Software Engineer", "React", "Full-Stack"],
-                verified_bullets=[
-                    "Contributed to enterprise software modules within agile engineering teams, focusing on frontend state management and REST API integration.",
-                    "Participated in code reviews, debugging sessions, and performance profiling to maintain production code quality.",
-                ],
-                tech_used=["React", "TypeScript", "REST APIs", "Git"],
-            ),
-            ExperienceItem(
-                id="exp_siwes_lcda",
-                company="Igbogbo Bayeku LCDA (ICT Unit)",
-                role_title="Software & ICT Industrial Trainee (SIWES)",
-                location="Ikorodu, Lagos",
-                start_date="Aug 2025",
-                end_date="Nov 2025",
-                role_tags=["Frontend", "Web Developer", "ICT"],
-                verified_bullets=[
-                    "Completed a 12-week industrial training placement supporting local government ICT operations, system diagnostics, and internal web utilities.",
-                ],
-                tech_used=["Web Development", "IT Support", "System Diagnostics"],
-            ),
-            ExperienceItem(
-                id="exp_sidehustle",
-                company="SideHustle",
-                role_title="Frontend Development Intern",
-                location="Remote",
-                start_date="Apr 2023",
-                end_date="May 2023",
-                role_tags=["Frontend", "React", "UI Engineer"],
-                verified_bullets=[
-                    "Translated Figma UI/UX wireframes into responsive, cross-browser web pages using React, JavaScript, HTML5, and CSS3.",
-                ],
-                tech_used=["React", "JavaScript", "HTML5", "CSS3", "Figma"],
-            ),
-        ],
-        projects=[
-            ProjectItem(
-                id="proj_areahustle",
-                name="AreaHustle: Voice-First AI Job Marketplace",
-                role="Lead Full-Stack & AI Engineer",
-                role_tags=["AI", "Frontend", "Next.js", "Voice AI", "Full-Stack"],
-                tech_stack=["Next.js", "TypeScript", "Gemini API", "Tailwind CSS", "Supabase"],
-                verified_bullets=[
-                    "Built a voice-first job marketplace and financial identity platform connecting informal workers to verified jobs via natural speech.",
-                    "Implemented multilingual audio transcription and automated skill-matching pipelines.",
-                ],
-                awards_or_metrics="1st Place Winner at YPIT Artificial Future Summit (Lagos, June 2026)",
-            ),
-            ProjectItem(
-                id="proj_resolveai",
-                name="ResolveAI: Autonomous Payment Dispute Agent",
-                role="Lead AI Frontend Engineer",
-                role_tags=["AI", "Frontend", "Next.js", "Agentic", "Fintech"],
-                tech_stack=["Next.js", "TypeScript", "Vercel AI SDK", "Tailwind CSS"],
-                verified_bullets=[
-                    "Built an autonomous payment operations dashboard that parses transaction logs, evaluates dispute evidence, and executes resolution workflows.",
-                ],
-                awards_or_metrics="Airwallex Agentic Banking Hackathon Entry (Oct 2026)",
-            ),
-            ProjectItem(
-                id="proj_swapdesk",
-                name="SwapDesk: Autonomous E-Commerce Returns State Machine",
-                role="Lead Engineer",
-                role_tags=["AI", "Frontend", "Next.js", "State Machines", "Full-Stack"],
-                tech_stack=["Next.js", "TypeScript", "State Machines", "Neatlogs", "EntireHQ", "AriTheCFO"],
-                verified_bullets=[
-                    "Engineered an automated e-commerce returns state machine integrated with @neatlogs for telemetry and @arithecfo for financial reconciliation.",
-                ],
-                awards_or_metrics="Built for #neatHack (Oct 2026)",
-            ),
-            ProjectItem(
-                id="proj_vitaltag",
-                name="VITAL-TAG: Edge-AI Livestock Health Monitoring Platform",
-                role="Lead Web & AI Engineer",
-                role_tags=["AI", "Frontend", "React", "Next.js", "IoT"],
-                tech_stack=["React", "Next.js", "Edge AI", "IoT Telemetry", "Tailwind CSS"],
-                verified_bullets=[
-                    "Created a real-time web dashboard paired with Edge-AI livestock biometric tags to detect early health anomalies.",
-                ],
-                awards_or_metrics="1st Place Winner (Gbagada Phase) at Red Bull Basement Nigeria 2026",
-            ),
-            ProjectItem(
-                id="proj_vitalink",
-                name="Vitalink: Remote Patient Monitoring & Multilingual AI System",
-                role="Co-Creator & Lead Frontend/Mobile Developer",
-                role_tags=["Flutter", "Mobile", "Frontend", "AI", "Next.js"],
-                tech_stack=["Flutter", "Dart", "Next.js", "TypeScript", "REST APIs"],
-                verified_bullets=[
-                    "Developed cross-platform Flutter mobile apps and Next.js web dashboards for real-time patient vital tracking and multilingual AI triage.",
-                ],
-                awards_or_metrics="1st Place at Cavista Hackathon 2025 & 1st Place at CODEFEST NIGHACK UNILAG (Nov 2025)",
-            ),
-            ProjectItem(
-                id="proj_devassist",
-                name="DevAssist: AI-Powered IDE & Low-Code Platform",
-                role="Frontend & AI Integration Lead",
-                role_tags=["AI", "Frontend", "React", "Next.js", "Developer Tools"],
-                tech_stack=["React", "Next.js", "TypeScript", "LLM APIs", "Tailwind CSS"],
-                verified_bullets=[
-                    "Built an interactive web-based AI code editor and component generator to speed up frontend scaffolding and debugging.",
-                ],
-                awards_or_metrics="1st Place Winner at Aipreneur 2025 Hackathon by Remo Start",
-            ),
-        ],
-        education=[
-            EducationItem(
-                institution="Lagos State University of Science and Technology (LASUSTECH)",
-                degree="B.Sc. in Computer Science",
-                location="Ikorodu, Lagos",
-                dates="2023 - Present",
-            )
-        ],
-        skills_by_category={
-            "Frontend Web": [
-                "React.js", "Next.js (App Router)", "TypeScript", "JavaScript (ES6+)",
-                "Tailwind CSS", "HTML5 & CSS3", "Figma UI/UX", "State Management"
-            ],
-            "AI Engineering": [
-                "Vercel AI SDK", "Google Gemini API", "Agentic Workflows",
-                "Structured JSON Outputs", "Voice-First AI UIs", "Prompt Engineering"
-            ],
-            "Mobile Development": [
-                "Flutter", "Dart", "Cross-Platform Mobile UI",
-                "REST API Integration", "Offline-First Architecture"
-            ],
-            "Backend & Tooling": [
-                "Supabase (PostgreSQL)", "Firebase (Firestore & Storage)", "Python (FastAPI)",
-                "Playwright", "Git & GitHub", "pnpm"
-            ]
-        },
-    )
-
-def seed_master_profile(user_id: str | None = None) -> dict:
-    user_ref = get_user_ref(user_id)
-    profile = clean_no_em_dash(get_default_master_profile(user_ref.id).model_dump(mode="json"))
-    prefs = clean_no_em_dash(get_default_scout_preferences(user_ref.id).model_dump(mode="json"))
-    user_ref.collection("vault").document("master_profile").set(profile)
-    user_ref.collection("vault").document("scout_preferences").set(prefs)
-    return {"profile": profile, "scout_preferences": prefs}
-
 def get_master_profile(user_id: str | None = None) -> dict:
     user_ref = get_user_ref(user_id)
     doc_ref = user_ref.collection("vault").document("master_profile")
     snap = doc_ref.get()
     if not snap.exists:
-        return seed_master_profile(user_id)["profile"]
+        return MasterProfile(user_id=user_ref.id).model_dump(mode="json")
     return clean_no_em_dash(snap.to_dict())
+
+def save_master_profile(profile: MasterProfile, user_id: str | None = None) -> dict:
+    user_ref = get_user_ref(user_id)
+    profile.user_id = user_ref.id
+    profile.is_onboarded = has_verified_profile_content(profile)
+    payload = clean_no_em_dash(profile.model_dump(mode="json"))
+    user_ref.collection("vault").document("master_profile").set(payload)
+    return payload
+
+def save_scout_preferences(preferences: ScoutPreferences, user_id: str | None = None) -> dict:
+    user_ref = get_user_ref(user_id)
+    preferences.user_id = user_ref.id
+    preferences.updated_at = datetime.now(timezone.utc)
+    payload = clean_no_em_dash(preferences.model_dump(mode="json"))
+    user_ref.collection("vault").document("scout_preferences").set(payload)
+    return payload
 
 def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -> dict:
     """
@@ -363,6 +192,7 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     parsed_profile = MasterProfile.model_validate_json(response.text)
     user_ref = get_user_ref(user_id)
     parsed_profile.user_id = user_ref.id
+    parsed_profile.is_onboarded = has_verified_profile_content(parsed_profile)
 
     # Run deterministic sanitizer to guarantee zero em-dashes or en-dashes
     clean_payload = clean_no_em_dash(parsed_profile.model_dump(mode="json"))

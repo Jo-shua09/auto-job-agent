@@ -1,218 +1,138 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { Suspense, useEffect, useState } from "react";
-import { ArrowLeft, Check, Download, FileText, ShieldCheck, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, ExternalLink, FileText } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Chip, CompanyAvatar, MatchBadge, TrackChip } from "@/components/job-bits";
-import { CvPreview } from "@/components/cv-preview";
 import { PageHeader } from "@/components/app-shell";
-import { agent, useAgent } from "@/lib/agent-store";
-import { cn } from "@/lib/utils";
-import { ArtifactDrawer, type Artifact } from "@/components/queue/artifact-drawer";
+import { API_URL, apiRequest } from "@/lib/api";
 
-export default function QueuePage() {
-  return (
-    <Suspense fallback={null}>
-      <QueueView />
-    </Suspense>
-  );
-}
+type Job = {
+  id: string;
+  company_name: string;
+  role_title: string;
+  external_url: string;
+  location_type: string;
+  match_score: number;
+  match_reasoning?: string;
+  ats_platform: string;
+};
+type TailoredPackage = {
+  job_id: string;
+  target_role_headline: string;
+  tailored_summary: string;
+  critic_score: number;
+  critic_feedback?: string;
+  cv_pdf_url?: string | null;
+  cover_letter_text?: string | null;
+  screening_answers: Record<string, string>;
+};
 
-function QueueView() {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const id = searchParams.get("id") ?? undefined;
-  const queue = useAgent((s) => s.queue);
-  const [artifact, setArtifact] = useState<Artifact | null>(null);
-  const [isDesktop, setIsDesktop] = useState(false);
+export default function QueueView() {
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [selectedId, setSelectedId] = useState("");
+  const [packageData, setPackageData] = useState<TailoredPackage | null>(null);
+  const [coverLetter, setCoverLetter] = useState("");
+  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [packageLoading, setPackageLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [applying, setApplying] = useState(false);
+
+  const refreshQueue = async () => {
+    const data = await apiRequest<Job[]>("/api/jobs?status=AWAITING_APPROVAL");
+    setJobs(data);
+    if (selectedId && !data.some((job) => job.id === selectedId)) {
+      setSelectedId("");
+      setPackageData(null);
+    }
+  };
 
   useEffect(() => {
-    const mql = window.matchMedia("(min-width: 1024px)");
-    const update = () => setIsDesktop(mql.matches);
-    update();
-    mql.addEventListener("change", update);
-    return () => mql.removeEventListener("change", update);
+    apiRequest<Job[]>("/api/jobs?status=AWAITING_APPROVAL")
+      .then(setJobs)
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load the review queue."))
+      .finally(() => setLoading(false));
   }, []);
 
-  const selected = queue.find((q) => q.id === id) ?? (isDesktop ? queue[0] : undefined);
+  useEffect(() => {
+    if (!selectedId) { setPackageData(null); return; }
+    let active = true;
+    setPackageLoading(true);
+    apiRequest<TailoredPackage>(`/api/tailor/${encodeURIComponent(selectedId)}`)
+      .then((result) => {
+        if (!active) return;
+        setPackageData(result);
+        setCoverLetter(result.cover_letter_text ?? "");
+        setAnswers(result.screening_answers ?? {});
+      })
+      .catch((error: unknown) => {
+        if (active) toast.error(error instanceof Error ? error.message : "Could not load the tailored package.");
+      })
+      .finally(() => { if (active) setPackageLoading(false); });
+    return () => { active = false; };
+  }, [selectedId]);
 
-  function selectJob(nextId?: string) {
-    const params = new URLSearchParams(searchParams.toString());
-    if (nextId) params.set("id", nextId);
-    else params.delete("id");
-    const query = params.toString();
-    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  async function saveEdits() {
+    if (!selectedId) return false;
+    setSaving(true);
+    try {
+      const saved = await apiRequest<TailoredPackage>(`/api/tailor/${encodeURIComponent(selectedId)}`, "PATCH", {
+        cover_letter_text: coverLetter,
+        screening_answers: answers,
+      });
+      setPackageData(saved);
+      toast.success("Tailored application updated.");
+      return true;
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not save your edits.");
+      return false;
+    } finally { setSaving(false); }
   }
 
-  async function approve(jid: string) {
-    if (!agent.canApply()) {
-      toast.error("Daily limit reached. Raise it in Settings or try tomorrow.");
-      return;
-    }
-    const job = queue.find((q) => q.id === jid);
-    selectJob();
-    toast.success(`Applying to ${job?.company}`, { description: "Follow along on the Agent page." });
-    agent.approve(jid);
+  async function approveAndApply() {
+    if (!selectedId) return;
+    setApplying(true);
+    try {
+      if (!await saveEdits()) throw new Error("Save your tailored package before approving it.");
+      await apiRequest(`/api/jobs/${encodeURIComponent(selectedId)}/approve`, "POST");
+      await apiRequest(`/api/apply/${encodeURIComponent(selectedId)}/execute`, "POST");
+      toast.success("Application submitted to the agent.");
+      setSelectedId("");
+      setPackageData(null);
+      await refreshQueue();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not start the application.");
+      await refreshQueue().catch((refreshError: unknown) => toast.error(refreshError instanceof Error ? refreshError.message : "Could not refresh the review queue."));
+    } finally { setApplying(false); }
   }
+
+  const selected = jobs.find((job) => job.id === selectedId);
+  const pdfUrl = packageData?.cv_pdf_url ? (packageData.cv_pdf_url.startsWith("http") ? packageData.cv_pdf_url : `${API_URL}${packageData.cv_pdf_url}`) : null;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 md:px-8 md:py-12">
-      <div className={cn(selected && "hidden lg:block")}>
-        <PageHeader
-          eyebrow={`${queue.length} awaiting approval`}
-          title="Review queue"
-          subtitle="Everything here is tailored and ready. Approve to send, or skip to pass."
-          action={
-            queue.length > 1 ? (
-              <Button variant="soft" onClick={() => queue.forEach((q) => approve(q.id))}>
-                <Check /> Approve all ({queue.length})
-              </Button>
-            ) : null
-          }
-        />
-      </div>
-
-      {queue.length === 0 ? (
-        <div className="mt-10 rounded-3xl border border-dashed border-border p-10 text-center">
-          <p className="ui-title">All caught up</p>
-          <p className="mt-1 text-sm text-muted-foreground">Launch a scout from the Agent page to find more roles.</p>
-          <Button asChild variant="hero" className="mt-5">
-            <Link href="/agent">Go to Agent</Link>
-          </Button>
-        </div>
-      ) : (
-        <div className="mt-8 grid grid-cols-[minmax(0,1fr)] gap-6 lg:grid-cols-[320px_minmax(0,1fr)]">
-          <ul className={cn("min-w-0 space-y-2.5", selected && "hidden lg:block")}>
-            {queue.map((j) => (
-              <li key={j.id}>
-                <button
-                  onClick={() => selectJob(j.id)}
-                  className={cn(
-                    "flex w-full min-w-0 flex-col gap-3 rounded-2xl border p-4 text-left transition-all",
-                    selected?.id === j.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30",
-                  )}
-                >
-                  <div className="flex min-w-0 items-center gap-3">
-                    <CompanyAvatar name={j.company} />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate font-medium">{j.role}</p>
-                      <p className="truncate text-sm text-muted-foreground">{j.company}</p>
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap gap-1.5">
-                    <MatchBadge value={j.match} />
-                    <Chip>{j.platform}</Chip>
-                    <TrackChip track={j.track} />
-                  </div>
-                </button>
-              </li>
-            ))}
-          </ul>
-
-          {selected && (
-            <div className="min-w-0">
-              <button
-                onClick={() => selectJob()}
-                className="mb-4 flex items-center gap-1.5 text-sm text-muted-foreground lg:hidden"
-              >
-                <ArrowLeft className="size-4" /> All roles
-              </button>
-              <div className="rounded-3xl border border-border bg-card p-5 shadow-soft sm:p-6">
-                <div className="flex min-w-0 items-start gap-4">
-                  <CompanyAvatar name={selected.company} className="size-14 text-base" />
-                  <div className="min-w-0 flex-1">
-                    <h2 className="font-display text-3xl leading-tight">{selected.role}</h2>
-                    <p className="mt-1 text-muted-foreground">
-                      {selected.company} · {selected.location} · <span className="font-mono text-sm">{selected.salary}</span>
-                    </p>
-                    <div className="mt-3 flex flex-wrap gap-1.5">
-                      <MatchBadge value={selected.match} />
-                      <Chip>{selected.platform}</Chip>
-                      <TrackChip track={selected.track} />
-                      <Chip tone="info">
-                        <ShieldCheck className="size-3" /> {selected.critic}/100 verified
-                      </Chip>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,0.9fr)]">
-                  <div className="min-w-0 space-y-6">
-                    <section>
-                      <h3 className="ui-title mb-2 text-sm">Why it matches you</h3>
-                      <ul className="space-y-2">
-                        {selected.why.map((w) => (
-                          <li key={w} className="flex gap-2.5 text-[15px]">
-                            <Check className="mt-1 size-4 shrink-0 text-mint" /> {w}
-                          </li>
-                        ))}
-                      </ul>
-                    </section>
-                    <section>
-                      <h3 className="ui-title mb-2 text-sm">Cover letter</h3>
-                      <Textarea
-                        value={selected.coverLetter}
-                        onChange={(e) => agent.updateCover(selected.id, e.target.value)}
-                        rows={9}
-                        className="rounded-2xl bg-background text-[14px] leading-relaxed"
-                      />
-                    </section>
-                    <section>
-                      <h3 className="ui-title mb-2 text-sm">Screening answers</h3>
-                      <div className="space-y-3">
-                        {selected.answers.map((a, i) => (
-                          <div key={a.q} className="rounded-2xl border border-border bg-background p-3">
-                            <p className="mb-1.5 text-sm font-medium">{a.q}</p>
-                            <Textarea
-                              value={a.a}
-                              onChange={(e) => agent.updateAnswer(selected.id, i, e.target.value)}
-                              rows={3}
-                              className="rounded-xl border-0 bg-transparent p-0 text-sm shadow-none focus-visible:ring-0"
-                            />
-                          </div>
-                        ))}
-                      </div>
-                    </section>
-                  </div>
-                  <section className="min-w-0">
-                    <div className="mb-2 flex items-center justify-between">
-                      <h3 className="ui-title flex items-center gap-1.5 text-sm">
-                        <FileText className="size-4" /> Tailored CV
-                      </h3>
-                      <Button size="sm" variant="ghost" onClick={() => setArtifact(selected)}>
-                        <Download /> Open full CV
-                      </Button>
-                    </div>
-                    <CvPreview role={selected.role} company={selected.company} />
-                  </section>
-                </div>
+      <PageHeader eyebrow={`${jobs.length} awaiting approval`} title="Review queue" subtitle="Review the real tailored package before approving an application." />
+      {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading your review queue...</p> : jobs.length === 0 ? (
+        <div className="mt-8 rounded-3xl border border-dashed border-border p-10 text-center"><p className="ui-title">Nothing waiting for review</p><p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">No tailored applications waiting for approval yet. Run the Scout or paste a job link to generate tailored ATS packages.</p><Button asChild variant="hero" className="mt-5"><Link href="/agent">Go to Command Center</Link></Button></div>
+      ) : <div className="mt-8 grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <ul className="space-y-2">{jobs.map((job) => <li key={job.id}><button type="button" onClick={() => setSelectedId(job.id)} className={`w-full rounded-2xl border p-4 text-left ${selectedId === job.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30"}`}><p className="font-medium">{job.role_title}</p><p className="mt-1 text-sm text-muted-foreground">{job.company_name}</p><p className="mt-3 text-xs text-muted-foreground">{job.match_score}% match · {job.location_type} · {job.ats_platform}</p></button></li>)}</ul>
+        {!selectedId ? <div className="grid min-h-60 place-items-center rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Select an application to review its tailored package.</div> : selected && <section className="min-w-0 space-y-5 rounded-3xl border border-border bg-card p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-3xl">{selected.role_title}</h2><p className="mt-1 text-muted-foreground">{selected.company_name} · {selected.location_type} · {selected.match_score}% match</p>{selected.match_reasoning && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{selected.match_reasoning}</p>}</div><Button asChild size="sm" variant="outline"><a href={selected.external_url} target="_blank" rel="noreferrer"><ExternalLink /> Job post</a></Button></div>
+          {packageLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading tailored application...</p> : !packageData ? <p className="py-6 text-sm text-muted-foreground">The tailored package is not available.</p> : <>
+            <div className="grid gap-5 xl:grid-cols-2">
+              <div className="space-y-4"><div><p className="text-sm font-medium">Tailored headline</p><p className="mt-1">{packageData.target_role_headline}</p></div><div><p className="text-sm font-medium">Tailored summary</p><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{packageData.tailored_summary}</p></div><p className="text-sm">Review score: <span className="font-semibold">{packageData.critic_score}/100</span>{packageData.critic_feedback && <span className="ml-2 text-muted-foreground">{packageData.critic_feedback}</span>}</p>
+                <div className="space-y-2"><label className="text-sm font-medium">Cover letter</label><Textarea value={coverLetter} onChange={(event) => setCoverLetter(event.target.value)} rows={10} className="rounded-xl bg-background" /></div>
+                <div className="space-y-3"><p className="text-sm font-medium">Screening answers</p>{Object.entries(answers).length === 0 ? <p className="text-sm text-muted-foreground">No screening answers were generated.</p> : Object.entries(answers).map(([question, answer]) => <div key={question} className="space-y-1.5 rounded-xl border border-border p-3"><label className="text-sm font-medium">{question}</label><Textarea value={answer} onChange={(event) => setAnswers((current) => ({ ...current, [question]: event.target.value }))} rows={3} className="rounded-lg bg-background" /></div>)}</div>
               </div>
-
-              <div className="sticky bottom-[calc(5.5rem+env(safe-area-inset-bottom))] z-20 mt-4 flex gap-3 rounded-full border border-border bg-card/90 p-2 shadow-soft backdrop-blur-xl md:bottom-4">
-                <Button
-                  variant="ghost"
-                  className="flex-1 rounded-full"
-                  onClick={() => {
-                    agent.skip(selected.id);
-                    selectJob();
-                  }}
-                >
-                  <X /> Skip
-                </Button>
-                <Button variant="hero" className="flex-[2] rounded-full" onClick={() => approve(selected.id)}>
-                  <Check /> Approve & apply
-                </Button>
-              </div>
+              <div className="min-w-0"><div className="mb-2 flex items-center gap-2"><FileText className="size-4" /><h3 className="font-medium">Compiled tailored CV</h3></div>{pdfUrl ? <iframe title={`Tailored CV for ${selected.role_title}`} src={pdfUrl} className="h-[720px] w-full rounded-xl border border-border bg-white" /> : <div className="grid h-60 place-items-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">No compiled PDF is attached to this package.</div>}</div>
             </div>
-          )}
-        </div>
-      )}
-      <ArtifactDrawer artifact={artifact} onClose={() => setArtifact(null)} />
+            <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4"><Button variant="outline" onClick={() => void saveEdits()} disabled={saving || applying}>{saving ? "Saving..." : "Save edits"}</Button><Button variant="hero" onClick={() => void approveAndApply()} disabled={applying || saving || packageLoading}><Check /> {applying ? "Starting application..." : "Approve & Auto-Apply"}</Button></div>
+          </>}
+        </section>}
+      </div>}
     </div>
   );
 }

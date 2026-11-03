@@ -47,13 +47,10 @@ class TargetRoleConfig(BaseModel):
 
 class ScoutPreferences(BaseModel):
     user_id: str
-    target_roles: List[TargetRoleConfig]
-    preferred_locations: List[str] = Field(
-        default_factory=lambda: ["Remote", "Anywhere", "Lagos, Nigeria", "EMEA"]
-    )
-    excluded_keywords: List[str] = Field(
-        default_factory=lambda: ["US Citizens Only", "Security Clearance", "On-site Only US"]
-    )
+    target_roles: List[TargetRoleConfig] = Field(default_factory=list)
+    preferred_locations: List[str] = Field(default_factory=list)
+    work_modes: List[str] = Field(default_factory=list)
+    excluded_keywords: List[str] = Field(default_factory=list)
     min_match_score: int = Field(default=75, ge=0, le=100)
     daily_apply_limit: int = Field(
         default=10,
@@ -78,13 +75,7 @@ class ScoutPreferences(BaseModel):
             "ycombinator.com/jobs",
         ]
     )
-    custom_job_domains: List[str] = Field(
-        default_factory=lambda: [
-            "jobberman.com",
-            "myjobmag.com",
-        ],
-        description="Add any local or niche job board domains you want the Scout to include.",
-    )
+    custom_job_domains: List[str] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # --- 1. MASTER PROFILE VAULT SCHEMA ---
@@ -118,35 +109,29 @@ class EducationItem(BaseModel):
     dates: str
 
 class MasterProfile(BaseModel):
-    user_id: str
-    full_name: str
-    email: str
-    phone: str
-    location: str
+    user_id: str = ""
+    full_name: str = ""
+    email: str = ""
+    phone: str = ""
+    location: str = ""
     portfolio_url: Optional[str] = None
-    github_url: str
-    linkedin_url: str
+    github_url: str = ""
+    linkedin_url: str = ""
     summary_template: str = ""     # Your base CV summary style
-    experiences: List[ExperienceItem]
-    projects: List[ProjectItem]
-    education: List[EducationItem] = Field(
-        default_factory=lambda: [
-            EducationItem(
-                institution="Lagos State University of Science and Technology (LASUSTECH)",
-                degree="B.Sc. in Computer Science",
-                location="Lagos, Nigeria",
-                dates="In Progress",
-            )
-        ]
-    )
-    skills_by_category: Dict[str, List[str]]
+    experiences: List[ExperienceItem] = Field(default_factory=list)
+    projects: List[ProjectItem] = Field(default_factory=list)
+    education: List[EducationItem] = Field(default_factory=list)
+    skills_by_category: Dict[str, List[str]] = Field(default_factory=dict)
     application_defaults: Dict[str, str] = Field(
         default_factory=lambda: {
-            "notice_period": "Immediate / 2 Weeks",
-            "work_authorization": "Authorized",
-            "requires_sponsorship": "No",
+            "notice_period": "",
+            "expected_salary": "",
+            "work_authorization": "",
+            "requires_sponsorship": "",
+            "preferred_work_mode": "",
         }
     )
+    is_onboarded: bool = False
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # --- 2. JOB RECORD SCHEMA ---
