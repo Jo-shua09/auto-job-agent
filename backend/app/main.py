@@ -42,8 +42,14 @@ from app.services.inbox_service import (
     process_and_record_email_event,
     list_email_events,
 )
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Header, Depends
+from app.services.auth_service import (
+    verify_real_firebase_id_token,
+    firebase_rest_email_signup_or_login,
+    get_current_user,
+)
 
-app = FastAPI(title="VANGUARD - Autonomous Job Agent API", version="1.0.0")
+app = FastAPI(title="VERDANT - Autonomous Job Agent API", version="1.0.0")
 
 # Allow localhost:3000 AND Lovable preview domains to connect seamlessly
 app.add_middleware(
@@ -438,3 +444,61 @@ def simulate_incoming_recruiter_email(req: SimulateEmailRequest):
 def read_tracked_email_events():
     """Returns all classified recruiter emails and status transitions."""
     return list_email_events()
+
+# --- REAL FIREBASE AUTHENTICATION ENDPOINTS ---
+
+class FirebaseTokenRequest(BaseModel):
+    id_token: str = Field(description="The real Firebase ID Token from user.getIdToken() on the frontend")
+    full_name: Optional[str] = Field(default=None, description="Optional display name during initial registration")
+
+class EmailPasswordAuthRequest(BaseModel):
+    email: str = Field(default="joshua@boukartech.com")
+    password: str = Field(min_length=6, default="vanguard2026")
+    full_name: Optional[str] = Field(default="Joshua Onyeka Ituma")
+
+@app.post("/api/auth/session")
+def establish_firebase_session(req: FirebaseTokenRequest):
+    """
+    Primary Production Endpoint:
+    The frontend signs the user in via Firebase Web SDK (signInWithEmailAndPassword,
+    createUserWithEmailAndPassword, or signInWithPopup GoogleAuthProvider), grabs
+    `await user.getIdToken()`, and sends it here to verify & sync with Firestore!
+    """
+    try:
+        res = verify_real_firebase_id_token(req.id_token)
+        if req.full_name and res["user"]["user_id"]:
+            get_user_ref(res["user"]["user_id"]).set({"full_name": req.full_name}, merge=True)
+            res["user"]["full_name"] = req.full_name
+        return res
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+@app.post("/api/auth/register")
+async def auth_register_email(req: EmailPasswordAuthRequest):
+    """Creates a real user in Firebase Authentication and seeds their Firestore Vault."""
+    try:
+        return await firebase_rest_email_signup_or_login(
+            email=req.email,
+            password=req.password,
+            full_name=req.full_name,
+            is_signup=True,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/auth/login")
+async def auth_login_email(req: EmailPasswordAuthRequest):
+    """Signs in an existing user against Firebase Authentication."""
+    try:
+        return await firebase_rest_email_signup_or_login(
+            email=req.email,
+            password=req.password,
+            is_signup=False,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=401, detail=str(e))
+
+@app.get("/api/auth/me")
+async def auth_current_user(current_user: dict = Depends(get_current_user)):
+    """Returns the verified Firebase user profile and active Firestore tenant."""
+    return {"authenticated": True, "user": current_user}
