@@ -31,6 +31,11 @@ from app.services.tailor_service import (
     get_tailored_package,
 )
 from app.services.state_machine import transition_job_state
+from app.services.applicator_service import (
+    execute_job_application,
+    run_queued_applications_batch,
+    get_execution_log,
+)
 
 app = FastAPI(title="VANGUARD - Autonomous Job Agent API", version="1.0.0")
 
@@ -349,3 +354,44 @@ def submit_manual_otp_code(job_id: str, req: SubmitOTPRequest):
         status="active",
     )
     return {"status": "otp_relayed", "job_id": job_id}
+
+    # --- PHASE 6: PLAYWRIGHT APPLICATOR & LIVE MANUAL OTP RELAY ---
+
+@app.post("/api/apply/{job_id}/execute")
+async def trigger_playwright_application(
+    job_id: str,
+    headless: bool = Query(
+        default=True,
+        description="Set to false to watch the Chromium browser open and fill the form live on your screen!",
+    ),
+    simulate_otp: bool = Query(
+        default=False,
+        description="Set to true to test the WAITING_FOR_OTP pause-and-resume handshake!",
+    ),
+):
+    """Launches the Playwright Applicator Worker for a specific job."""
+    try:
+        return await execute_job_application(
+            job_id=job_id,
+            headless=headless,
+            simulate_otp_for_testing=simulate_otp,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/api/apply/run-queue")
+async def trigger_queued_applications_batch(
+    headless: bool = Query(default=True, description="Set to false to watch Playwright apply visibly")
+):
+    """Executes all jobs in APPLYING_QUEUED up to your remaining Daily Application Limit (default 10)."""
+    return await run_queued_applications_batch(headless=headless)
+
+@app.get("/api/apply/{job_id}/log")
+def read_job_execution_log(job_id: str):
+    """Returns the real-time Playwright execution log, OTP prompt state, and confirmation screenshot."""
+    return get_execution_log(job_id)
+
+@app.get("/api/jobs/waiting-otp")
+def list_jobs_waiting_for_otp():
+    """Returns any jobs currently paused in WAITING_FOR_OTP so the UI can pop up the OTP input modal."""
+    return list_discovered_jobs(status_filter=JobStatus.WAITING_FOR_OTP)

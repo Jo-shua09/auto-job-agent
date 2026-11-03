@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+"use client";
+
 import { useMemo, useState } from "react";
 import { ExternalLink, FileText, MessageSquareText, Search } from "lucide-react";
 import { Input } from "@/components/ui/input";
@@ -8,20 +9,6 @@ import { PageHeader } from "@/components/app-shell";
 import { useAgent } from "@/lib/agent-store";
 import { appliedToday, groupByDay, STATUS_LABEL, type AppliedJob, type AppliedStatus } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_authenticated/history")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Application history — Jobhunter Agent" },
-      { name: "description", content: "Every job your agent applied to, grouped by day." },
-      { property: "og:title", content: "Application history — Jobhunter Agent" },
-      { property: "og:description", content: "Every application, grouped by day." },
-    ],
-  }),
-  component: HistoryPage,
-});
 
 const STATUS_TONE: Record<AppliedStatus, "muted" | "mint" | "warning" | "danger" | "info"> = {
   APPLIED: "muted",
@@ -40,7 +27,7 @@ const FILTERS: { key: "all" | AppliedStatus; label: string }[] = [
   { key: "OFFER_STAGE", label: "Offers" },
 ];
 
-function HistoryPage() {
+export default function HistoryPage() {
   const history = useAgent((s) => s.history);
   const limit = useAgent((s) => s.limit);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");

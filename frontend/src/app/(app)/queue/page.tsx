@@ -1,4 +1,8 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useState } from "react";
 import { ArrowLeft, Check, Download, FileText, ShieldCheck, X } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -8,30 +12,42 @@ import { CvPreview } from "@/components/cv-preview";
 import { PageHeader } from "@/components/app-shell";
 import { agent, useAgent } from "@/lib/agent-store";
 import { cn } from "@/lib/utils";
-import { useState } from "react";
 import { ArtifactDrawer, type Artifact } from "@/components/queue/artifact-drawer";
 
-export const Route = createFileRoute("/_authenticated/queue")({
-  validateSearch: (s: Record<string, unknown>): { id?: string | undefined } => ({ id: typeof s["id"] === "string" ? s["id"] : undefined }),
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Review queue — Jobhunter Agent" },
-      { name: "description", content: "Approve tailored applications before your agent sends them." },
-      { property: "og:title", content: "Review queue — Jobhunter Agent" },
-      { property: "og:description", content: "Approve tailored applications before they're sent." },
-    ],
-  }),
-  component: QueuePage,
-});
+export default function QueuePage() {
+  return (
+    <Suspense fallback={null}>
+      <QueueView />
+    </Suspense>
+  );
+}
 
-function QueuePage() {
-  const { id } = Route.useSearch();
-  const navigate = useNavigate({ from: "/queue" });
+function QueueView() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const id = searchParams.get("id") ?? undefined;
   const queue = useAgent((s) => s.queue);
   const [artifact, setArtifact] = useState<Artifact | null>(null);
-  const selected = queue.find((q) => q.id === id) ?? (typeof window !== "undefined" && window.innerWidth >= 1024 ? queue[0] : undefined);
+  const [isDesktop, setIsDesktop] = useState(false);
+
+  useEffect(() => {
+    const mql = window.matchMedia("(min-width: 1024px)");
+    const update = () => setIsDesktop(mql.matches);
+    update();
+    mql.addEventListener("change", update);
+    return () => mql.removeEventListener("change", update);
+  }, []);
+
+  const selected = queue.find((q) => q.id === id) ?? (isDesktop ? queue[0] : undefined);
+
+  function selectJob(nextId?: string) {
+    const params = new URLSearchParams(searchParams.toString());
+    if (nextId) params.set("id", nextId);
+    else params.delete("id");
+    const query = params.toString();
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false });
+  }
 
   async function approve(jid: string) {
     if (!agent.canApply()) {
@@ -39,7 +55,7 @@ function QueuePage() {
       return;
     }
     const job = queue.find((q) => q.id === jid);
-    navigate({ search: { id: undefined } });
+    selectJob();
     toast.success(`Applying to ${job?.company}`, { description: "Follow along on the Agent page." });
     agent.approve(jid);
   }
@@ -66,7 +82,7 @@ function QueuePage() {
           <p className="ui-title">All caught up</p>
           <p className="mt-1 text-sm text-muted-foreground">Launch a scout from the Agent page to find more roles.</p>
           <Button asChild variant="hero" className="mt-5">
-            <Link to="/agent">Go to Agent</Link>
+            <Link href="/agent">Go to Agent</Link>
           </Button>
         </div>
       ) : (
@@ -75,7 +91,7 @@ function QueuePage() {
             {queue.map((j) => (
               <li key={j.id}>
                 <button
-                  onClick={() => navigate({ search: { id: j.id } })}
+                  onClick={() => selectJob(j.id)}
                   className={cn(
                     "flex w-full min-w-0 flex-col gap-3 rounded-2xl border p-4 text-left transition-all",
                     selected?.id === j.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30",
@@ -101,7 +117,7 @@ function QueuePage() {
           {selected && (
             <div className="min-w-0">
               <button
-                onClick={() => navigate({ search: { id: undefined } })}
+                onClick={() => selectJob()}
                 className="mb-4 flex items-center gap-1.5 text-sm text-muted-foreground lg:hidden"
               >
                 <ArrowLeft className="size-4" /> All roles
@@ -183,7 +199,7 @@ function QueuePage() {
                   className="flex-1 rounded-full"
                   onClick={() => {
                     agent.skip(selected.id);
-                    navigate({ search: { id: undefined } });
+                    selectJob();
                   }}
                 >
                   <X /> Skip

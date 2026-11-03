@@ -1,29 +1,17 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+"use client";
+
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandMark } from "@/components/brand";
 
-export const Route = createFileRoute("/reset-password")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Set a new password — Jobhunter Agent" },
-      { name: "description", content: "Choose a new password for your Jobhunter Agent account." },
-      { property: "og:title", content: "Set a new password — Jobhunter Agent" },
-      { property: "og:description", content: "Choose a new password for your account." },
-    ],
-  }),
-  component: Reset,
-});
-
-function Reset() {
+export default function Reset() {
   const [pw, setPw] = useState("");
   const [busy, setBusy] = useState(false);
-  const navigate = useNavigate();
+  const router = useRouter();
   return (
     <div className="bg-mesh flex min-h-dvh items-center justify-center px-5">
       <form
@@ -33,7 +21,7 @@ function Reset() {
           setBusy(true);
           setBusy(false);
           toast("Password recovery is not connected yet.");
-          navigate({ to: "/auth" });
+          router.replace("/auth");
         }}
       >
         <BrandMark />

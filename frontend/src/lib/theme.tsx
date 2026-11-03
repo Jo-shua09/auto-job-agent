@@ -7,6 +7,7 @@ export const themeInitScript = `(function(){try{document.documentElement.classLi
 export function useTheme() {
   const [theme, setTheme] = useState<Theme>("dark");
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setTheme(document.documentElement.classList.contains("dark") ? "dark" : "light");
   }, []);
   const toggle = () => {

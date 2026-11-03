@@ -1,28 +1,15 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+"use client";
+
 import { useEffect, useState } from "react";
-import { Check, Loader2, Moon, Sun } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { Check, Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { demoSignIn, getDemoUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandMark, BrandName } from "@/components/brand";
-import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/auth")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Sign in — Jobhunter Agent" },
-      { name: "description", content: "Sign in to let your agent scout, tailor and apply to roles for you." },
-      { property: "og:title", content: "Sign in — Jobhunter Agent" },
-      { property: "og:description", content: "Your autonomous job-hunting copilot." },
-    ],
-  }),
-  component: AuthPage,
-});
 
 const DEMO_STEPS = [
   "Scanning 15+ job boards for your roles",
@@ -67,19 +54,19 @@ function StepShowcase() {
   );
 }
 
-function AuthPage() {
-  const navigate = useNavigate();
-  const { theme, toggle } = useTheme();
+export default function AuthPage() {
+  const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
-    if (getDemoUser()) navigate({ to: "/agent", replace: true });
-  }, [navigate]);
+    if (getDemoUser()) router.replace("/agent");
+  }, [router]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -87,10 +74,10 @@ function AuthPage() {
     try {
       if (mode === "signin") {
         demoSignIn(email);
-        navigate({ to: "/agent", replace: true });
+        router.replace("/agent");
       } else if (mode === "signup") {
         demoSignIn(email, name);
-        navigate({ to: "/agent", replace: true });
+        router.replace("/agent");
       } else {
         setSent("Email recovery is not connected. Return to sign in to continue.");
       }
@@ -103,45 +90,56 @@ function AuthPage() {
 
   function oauth() {
     demoSignIn();
-    navigate({ to: "/agent", replace: true });
+    router.replace("/agent");
   }
 
   return (
-    <div className="grid min-h-dvh lg:grid-cols-[1.1fr_1fr]">
-      <section className="bg-mesh grain relative hidden flex-col justify-between overflow-hidden p-10 lg:flex xl:p-14">
-        <div className="flex items-center gap-2.5">
+    <div className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(460px,0.95fr)]">
+      <section className="bg-mesh grain relative hidden flex-col justify-between overflow-hidden px-10 py-9 lg:flex xl:px-16 xl:py-12">
+        <div className="relative z-10 flex items-center gap-2.5">
           <BrandMark />
           <BrandName />
         </div>
-        <div className="space-y-8">
-          <h2 className="font-display max-w-lg text-6xl leading-[1.02] xl:text-7xl">
-            Stop filling forms. <em className="text-mint">Start interviewing.</em>
-          </h2>
+        <div className="relative z-10 mx-auto w-full max-w-xl space-y-8">
+          <div className="space-y-4">
+            <p className="font-mono text-[11px] font-medium tracking-[0.2em] text-mint uppercase">
+              Your search, on autopilot
+            </p>
+            <h2 className="font-display max-w-xl text-5xl leading-[1.04] xl:text-6xl">
+              Stop filling forms. <em className="text-mint">Start interviewing.</em>
+            </h2>
+          </div>
           <StepShowcase />
         </div>
-        <p className="max-w-md text-sm text-muted-foreground">
-          Finds roles, tailors your CV from verified facts only, and applies — pausing just to ask you for email codes.
+        <p className="relative z-10 max-w-md text-sm leading-6 text-muted-foreground">
+          Verdant finds relevant roles and prepares tailored applications from your verified experience. You stay in control of every submission.
         </p>
       </section>
 
-      <section className="relative flex flex-col items-center justify-center px-5 py-10 sm:px-10">
-        <button
-          onClick={toggle}
-          aria-label="Toggle theme"
-          className="absolute top-5 right-5 grid size-10 place-items-center rounded-full border border-border bg-card"
-        >
-          {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-        </button>
-        <div className="w-full max-w-sm">
-          <div className="mb-8 flex items-center gap-2.5 lg:hidden">
+      <section className="relative flex min-w-0 flex-col items-center justify-center px-5 py-12 sm:px-10 lg:px-12 xl:px-16">
+        <div className="w-full max-w-md rounded-3xl border border-border/70 bg-card/70 p-6 shadow-soft backdrop-blur-xl sm:p-8">
+          <div className="mb-9 flex items-center gap-2.5 lg:hidden">
             <BrandMark />
             <BrandName />
           </div>
-          <h1 className="font-display text-4xl">{mode === "forgot" ? "Reset password" : "Your autonomous career vanguard."}</h1>
-          <p className="mt-2 text-muted-foreground">{mode === "forgot" ? "Password reset preview." : "Your next chapter starts here."}</p>
+          <div className="space-y-2">
+            <p className="font-mono text-[11px] font-medium tracking-[0.18em] text-mint uppercase">
+              {mode === "forgot" ? "Account recovery" : "Welcome to Verdant"}
+            </p>
+            <h1 className="font-display text-4xl leading-tight">
+              {mode === "forgot" ? "Reset your password" : mode === "signup" ? "Create your account" : "Welcome back"}
+            </h1>
+            <p className="text-sm leading-6 text-muted-foreground">
+              {mode === "forgot"
+                ? "Enter your email to continue with account recovery."
+                : mode === "signup"
+                  ? "Set up your account and put your job search in motion."
+                  : "Sign in to pick up where your job search left off."}
+            </p>
+          </div>
 
           {mode !== "forgot" && (
-            <div className="mt-6 grid grid-cols-2 rounded-2xl border border-border bg-muted p-1">
+            <div className="mt-7 grid grid-cols-2 rounded-xl border border-border/70 bg-muted/70 p-1">
               {(["signin", "signup"] as const).map((m) => (
                 <button
                   key={m}
@@ -149,7 +147,10 @@ function AuthPage() {
                     setMode(m);
                     setSent(null);
                   }}
-                  className={cn("rounded-xl py-2 text-sm transition-all", mode === m ? "bg-card font-medium shadow-soft" : "text-muted-foreground")}
+                  className={cn(
+                    "min-h-10 rounded-lg text-sm font-medium transition-all",
+                    mode === m ? "bg-card text-foreground shadow-soft" : "text-muted-foreground hover:text-foreground",
+                  )}
                 >
                   {m === "signin" ? "Sign in" : "Sign up"}
                 </button>
@@ -158,23 +159,23 @@ function AuthPage() {
           )}
 
           {sent ? (
-            <div className="mt-6 rounded-2xl border border-border bg-accent p-4 text-sm text-accent-foreground">{sent}</div>
+            <div className="mt-7 rounded-2xl border border-border bg-accent p-4 text-sm leading-6 text-accent-foreground">{sent}</div>
           ) : (
-            <form onSubmit={submit} className="mt-6 space-y-4">
+            <form onSubmit={submit} className="mt-7 space-y-5">
               {mode === "signup" && (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <Label htmlFor="name">Full name</Label>
                   <Input
                     id="name"
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    className="h-11 rounded-xl"
+                    className="h-12 rounded-xl px-4"
                     placeholder="Joshua Onyeka"
                   />
                 </div>
               )}
-              <div className="space-y-1.5">
+              <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <Input
                   id="email"
@@ -182,37 +183,52 @@ function AuthPage() {
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  className="h-11 rounded-xl"
+                  className="h-12 rounded-xl px-4"
                   placeholder="you@example.com"
                 />
               </div>
               {mode !== "forgot" && (
-                <div className="space-y-1.5">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="pw">Password</Label>
                     {mode === "signin" && (
-                      <button type="button" onClick={() => setMode("forgot")} className="text-xs text-muted-foreground hover:text-foreground">
+                      <button
+                        type="button"
+                        onClick={() => setMode("forgot")}
+                        className="text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+                      >
                         Forgot?
                       </button>
                     )}
                   </div>
-                  <Input
-                    id="pw"
-                    type="password"
-                    required
-                    minLength={6}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    className="h-11 rounded-xl"
-                  />
+                  <div className="relative">
+                    <Input
+                      id="pw"
+                      type={showPassword ? "text" : "password"}
+                      required
+                      minLength={6}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="h-12 rounded-xl px-4 pr-12"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((visible) => !visible)}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      aria-pressed={showPassword}
+                      className="absolute inset-y-0 right-0 grid w-12 place-items-center rounded-r-xl text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    >
+                      {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+                    </button>
+                  </div>
                 </div>
               )}
-              <Button type="submit" variant="hero" size="lg" className="w-full" disabled={busy}>
+              <Button type="submit" variant="hero" size="lg" className="mt-1 h-12 w-full rounded-xl" disabled={busy}>
                 {busy && <Loader2 className="animate-spin" />}
                 {mode === "signin" ? "Sign in to workspace" : mode === "signup" ? "Create account" : "Continue"}
               </Button>
               {mode === "forgot" && (
-                <button type="button" onClick={() => setMode("signin")} className="w-full text-sm text-muted-foreground hover:text-foreground">
+                <button type="button" onClick={() => setMode("signin")} className="w-full py-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
                   Back to sign in
                 </button>
               )}
@@ -224,7 +240,7 @@ function AuthPage() {
               <div className="my-6 flex items-center gap-3 text-xs text-muted-foreground">
                 <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
               </div>
-              <div className="space-y-2.5">
+              <div>
                 <Button variant="outline" size="lg" className="w-full bg-card" onClick={oauth}>
                   <svg viewBox="0 0 24 24" className="size-4" aria-hidden>
                     <path

@@ -24,7 +24,7 @@ export function BrandMark({ className }: { className?: string }) {
 export function BrandName({ className }: { className?: string }) {
   return (
     <span className={cn("ui-title truncate text-[17px]", className)}>
-      Jobhunter<span className="font-display text-[19px] italic text-mint"> Agent</span>
+      Verdant
     </span>
   );
 }

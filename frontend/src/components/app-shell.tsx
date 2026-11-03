@@ -1,5 +1,7 @@
-import { Link, useNavigate, useRouterState } from "@tanstack/react-router";
-import { useQueryClient } from "@tanstack/react-query";
+"use client";
+
+import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { CalendarClock, Inbox, LogOut, Moon, Settings2, ShieldCheck, Sparkles, Sun, PanelLeftClose, PanelLeftOpen, Minus, Plus } from "lucide-react";
 import { getDemoUser, demoSignOut, type DemoUser } from "@/lib/api";
@@ -40,17 +42,17 @@ function QuotaRing({ size = 44 }: { size?: number }) {
 function useUser() {
   const [user, setUser] = useState<DemoUser | null>(null);
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setUser(getDemoUser());
   }, []);
   return user;
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const pathname = useRouterState({ select: (s) => s.location.pathname });
+  const pathname = usePathname();
+  const router = useRouter();
   const { theme, toggle } = useTheme();
   const user = useUser();
-  const navigate = useNavigate();
-  const queryClient = useQueryClient();
   const limit = useAgent((s) => s.limit);
   const history = useAgent((s) => s.history);
   const queueCount = useAgent((s) => s.queue.length);
@@ -58,11 +60,9 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => { loadAgent(); }, []);
   const display = user?.name || user?.email?.split("@")[0] || "You";
 
-  async function signOut() {
-    await queryClient.cancelQueries();
-    queryClient.clear();
+  function signOut() {
     demoSignOut();
-    navigate({ to: "/auth", replace: true });
+    router.replace("/auth");
   }
 
   return (
@@ -92,7 +92,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             return (
               <Link
                 key={to}
-                to={to}
+                href={to}
                 title={label}
                 className={cn(
                   "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
@@ -158,7 +158,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {NAV.map(({ to, label, icon: Icon }) => {
           const active = pathname.startsWith(to);
           return (
-            <Link key={to} to={to} aria-label={label} className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1">
+            <Link key={to} href={to} aria-label={label} className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1">
               <span className={cn("grid h-8 w-12 place-items-center rounded-full transition-all duration-300", active ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>
                 <Icon className="size-[18px]" />
               </span>

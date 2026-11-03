@@ -1,4 +1,6 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+"use client";
+
+import Link from "next/link";
 import { useState } from "react";
 import { ArrowRight, Radar, Sparkles, Plus, MapPin } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
@@ -8,26 +10,12 @@ import { CompanyAvatar, MatchBadge } from "@/components/job-bits";
 import { agent, useAgent } from "@/lib/agent-store";
 import { appliedToday } from "@/lib/jobs";
 
-export const Route = createFileRoute("/_authenticated/agent")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Agent — Jobhunter Agent" },
-      { name: "description", content: "Watch your agent scout, tailor and apply in real time." },
-      { property: "og:title", content: "Agent — Jobhunter Agent" },
-      { property: "og:description", content: "Watch your agent work in real time." },
-    ],
-  }),
-  component: AgentPage,
-});
-
 function greeting() {
   const h = new Date().getHours();
   return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
 }
 
-function AgentPage() {
+export default function AgentPage() {
   const runs = useAgent((s) => s.runs);
   const queue = useAgent((s) => s.queue);
   const history = useAgent((s) => s.history);
@@ -196,7 +184,7 @@ function AgentPage() {
             <Sparkles className="mx-auto size-6 text-mint" />
             <p className="ui-title mt-3">Your agent is standing by</p>
             <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
-              Launch a scout or paste a job. You'll see every step here in plain English as it happens.
+              Launch a scout or paste a job. You&apos;ll see every step here in plain English as it happens.
             </p>
           </div>
         ) : (
@@ -208,7 +196,7 @@ function AgentPage() {
         <section className="mt-10">
           <div className="mb-3 flex items-center justify-between">
             <h2 className="ui-title">Waiting for your review</h2>
-            <Link to="/queue" className="flex items-center gap-1 text-sm text-mint hover:underline">
+            <Link href="/queue" className="flex items-center gap-1 text-sm text-mint hover:underline">
               Open queue <ArrowRight className="size-3.5" />
             </Link>
           </div>
@@ -216,8 +204,7 @@ function AgentPage() {
             {queue.slice(0, 4).map((j) => (
               <Link
                 key={j.id}
-                to="/queue"
-                search={{ id: j.id }}
+                href={`/queue?id=${encodeURIComponent(j.id)}`}
                 className="flex min-w-0 items-center gap-3 rounded-2xl border border-border bg-card p-3 transition-colors hover:bg-accent/40"
               >
                 <CompanyAvatar name={j.company} />

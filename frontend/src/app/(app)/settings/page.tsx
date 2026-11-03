@@ -1,4 +1,5 @@
-import { createFileRoute } from "@tanstack/react-router";
+"use client";
+
 import { useState } from "react";
 import { Moon, Sun } from "lucide-react";
 import { Slider } from "@/components/ui/slider";
@@ -9,20 +10,6 @@ import { agent, useAgent } from "@/lib/agent-store";
 import { TRACK_LABEL, type Track } from "@/lib/jobs";
 import { useTheme } from "@/lib/theme";
 import { cn } from "@/lib/utils";
-
-export const Route = createFileRoute("/_authenticated/settings")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Settings — Jobhunter Agent" },
-      { name: "description", content: "Choose target roles, daily limits and appearance." },
-      { property: "og:title", content: "Settings — Jobhunter Agent" },
-      { property: "og:description", content: "Tune how your agent hunts." },
-    ],
-  }),
-  component: SettingsPage,
-});
 
 function Row({ title, desc, children }: { title: string; desc: string; children: React.ReactNode }) {
   return (
@@ -36,7 +23,7 @@ function Row({ title, desc, children }: { title: string; desc: string; children:
   );
 }
 
-function SettingsPage() {
+export default function SettingsPage() {
   const limit = useAgent((s) => s.limit);
   const { theme, toggle } = useTheme();
   const [tracks, setTracks] = useState<Track[]>(["FRONTEND_WEB", "AI_FRONTEND", "MOBILE_FLUTTER"]);

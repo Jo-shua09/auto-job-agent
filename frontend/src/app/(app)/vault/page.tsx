@@ -1,6 +1,7 @@
-import { createFileRoute } from "@tanstack/react-router";
+"use client";
+
 import { useEffect, useState } from "react";
-import { Award, Briefcase, FileUp, Link2, Plus, Sparkles, User, Wrench } from "lucide-react";
+import { Award, Briefcase, FileUp, Plus, Sparkles, User, Wrench } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,20 +14,6 @@ import { loadVault, useVault, vaultActions } from "@/lib/vault";
 import { Textarea } from "@/components/ui/textarea";
 import { ArtifactDrawer } from "@/components/queue/artifact-drawer";
 
-export const Route = createFileRoute("/_authenticated/vault")({
-  head: () => ({
-    meta: [
-      { property: "og:type", content: "website" },
-      { name: "twitter:card", content: "summary_large_image" },
-      { title: "Profile vault — Jobhunter Agent" },
-      { name: "description", content: "Your verified career facts — the only source your agent writes from." },
-      { property: "og:title", content: "Profile vault — Jobhunter Agent" },
-      { property: "og:description", content: "Your verified career facts." },
-    ],
-  }),
-  component: VaultPage,
-});
-
 const TABS = [
   { key: "personal", label: "Personal", icon: User },
   { key: "work", label: "Experience", icon: Briefcase },
@@ -35,7 +22,7 @@ const TABS = [
   { key: "test", label: "Test CV", icon: Sparkles },
 ] as const;
 
-function VaultPage() {
+export default function VaultPage() {
   const vault = useVault();
   useEffect(() => {
     loadVault();
@@ -59,7 +46,7 @@ function VaultPage() {
       <PageHeader
         eyebrow="Single source of truth"
         title="Profile vault"
-        subtitle="Your agent only uses facts stored here. It can rephrase and reorder — never invent."
+        subtitle="Your agent only uses facts stored here. It can rephrase and reorder, but never invent."
       />
 
       <label

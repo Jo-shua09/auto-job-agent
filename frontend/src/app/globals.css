@@ -1,5 +1,5 @@
 @import "tailwindcss" source(none);
-@source "../src";
+@source "../";
 @import "tw-animate-css";
 
 @custom-variant dark (&:is(.dark *));
@@ -89,7 +89,7 @@
   }
 }
 
-/* Light — warm botanical paper & deep army ink */
+/* Light: warm botanical paper & deep army ink */
 :root {
   --radius: 0.875rem;
   --background: oklch(0.971275 0.005384 117.9227);
@@ -140,7 +140,7 @@
     0 0 0 1px color-mix(in oklab, var(--warning) 45%, transparent), 0 16px 48px -16px color-mix(in oklab, var(--warning) 55%, transparent);
 }
 
-/* Dark — deep army obsidian & glowing sage */
+/* Dark: deep army obsidian & glowing sage */
 .dark {
   --background: oklch(0.168701 0.013673 159.4513);
   --foreground: oklch(0.957476 0.009936 155.0947);
