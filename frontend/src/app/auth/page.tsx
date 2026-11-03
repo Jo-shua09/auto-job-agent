@@ -62,10 +62,17 @@ export default function AuthPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
-    if (getDemoUser()) router.replace("/agent");
+    if (getDemoUser()) {
+      router.replace("/agent");
+    } else {
+      // Session storage is only available in the browser, so finish the initial check here.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setCheckingSession(false);
+    }
   }, [router]);
 
   async function submit(e: React.FormEvent) {
@@ -89,8 +96,21 @@ export default function AuthPage() {
   }
 
   function oauth() {
+    setBusy(true);
     demoSignIn();
     router.replace("/agent");
+  }
+
+  if (checkingSession) {
+    return (
+      <main className="grid min-h-dvh place-items-center bg-background px-6">
+        <div role="status" aria-live="polite" className="flex flex-col items-center gap-4 text-center">
+          <BrandMark />
+          <Loader2 className="size-5 animate-spin text-mint" />
+          <p className="text-sm text-muted-foreground">Preparing your workspace...</p>
+        </div>
+      </main>
+    );
   }
 
   return (
@@ -161,7 +181,7 @@ export default function AuthPage() {
           {sent ? (
             <div className="mt-7 rounded-2xl border border-border bg-accent p-4 text-sm leading-6 text-accent-foreground">{sent}</div>
           ) : (
-            <form onSubmit={submit} className="mt-7 space-y-5">
+            <form onSubmit={submit} aria-busy={busy} className="mt-7 space-y-5">
               {mode === "signup" && (
                 <div className="space-y-2">
                   <Label htmlFor="name">Full name</Label>
@@ -225,7 +245,17 @@ export default function AuthPage() {
               )}
               <Button type="submit" variant="hero" size="lg" className="mt-1 h-12 w-full rounded-xl" disabled={busy}>
                 {busy && <Loader2 className="animate-spin" />}
-                {mode === "signin" ? "Sign in to workspace" : mode === "signup" ? "Create account" : "Continue"}
+                {busy
+                  ? mode === "signin"
+                    ? "Signing you in..."
+                    : mode === "signup"
+                      ? "Creating your account..."
+                      : "Continuing..."
+                  : mode === "signin"
+                    ? "Sign in to workspace"
+                    : mode === "signup"
+                      ? "Create account"
+                      : "Continue"}
               </Button>
               {mode === "forgot" && (
                 <button type="button" onClick={() => setMode("signin")} className="w-full py-1 text-sm text-muted-foreground transition-colors hover:text-foreground">
@@ -241,7 +271,7 @@ export default function AuthPage() {
                 <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
               </div>
               <div>
-                <Button variant="outline" size="lg" className="w-full bg-card" onClick={oauth}>
+                <Button variant="outline" size="lg" className="w-full bg-card" onClick={oauth} disabled={busy}>
                   <svg viewBox="0 0 24 24" className="size-4" aria-hidden>
                     <path
                       fill="currentColor"

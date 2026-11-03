@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useState } from "react";
-import { ArrowRight, Radar, Sparkles, Plus, MapPin } from "lucide-react";
+import { ArrowRight, Radar, Plus, MapPin } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { AgentRunCard } from "@/components/agent-run";
@@ -181,7 +181,7 @@ export default function AgentPage() {
       <div className="mt-10 space-y-4">
         {runs.length === 0 ? (
           <div className="rounded-3xl border border-dashed border-border p-8 text-center">
-            <Sparkles className="mx-auto size-6 text-mint" />
+            <Radar className="mx-auto size-6 text-mint" />
             <p className="ui-title mt-3">Your agent is standing by</p>
             <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
               Launch a scout or paste a job. You&apos;ll see every step here in plain English as it happens.

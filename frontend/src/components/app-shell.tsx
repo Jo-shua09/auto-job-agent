@@ -3,9 +3,17 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarClock, Inbox, LogOut, Moon, Settings2, ShieldCheck, Sparkles, Sun, PanelLeftClose, PanelLeftOpen, Minus, Plus } from "lucide-react";
+import { CalendarClock, ChevronDown, Inbox, LogOut, Moon, Settings2, ShieldCheck, Radar, Sun, PanelLeftClose, PanelLeftOpen, Minus, Plus } from "lucide-react";
 import { getDemoUser, demoSignOut, type DemoUser } from "@/lib/api";
 import { Button } from "@/components/ui/button";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { BrandMark, BrandName } from "@/components/brand";
 import { OtpBanner } from "@/components/otp-banner";
 import { useTheme } from "@/lib/theme";
@@ -14,7 +22,7 @@ import { appliedToday } from "@/lib/jobs";
 import { cn } from "@/lib/utils";
 
 const NAV = [
-  { to: "/agent", label: "Agent", icon: Sparkles },
+  { to: "/agent", label: "Agent", icon: Radar },
   { to: "/queue", label: "Queue", icon: Inbox },
   { to: "/history", label: "History", icon: CalendarClock },
   { to: "/vault", label: "Vault", icon: ShieldCheck },
@@ -214,9 +222,45 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <QuotaRing size={36} />
-          <button onClick={toggle} aria-label="Toggle theme" className="grid size-9 place-items-center rounded-full border border-border bg-card">
-            {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
-          </button>
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <button
+                type="button"
+                aria-label="Open profile menu"
+                className="flex h-10 items-center gap-1 rounded-full border border-border bg-card p-1 pr-2 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span className="grid size-7 place-items-center rounded-full bg-secondary text-xs font-semibold text-secondary-foreground uppercase">
+                  {display[0]}
+                </span>
+                <ChevronDown className="size-3.5 text-muted-foreground" />
+              </button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" sideOffset={8} className="w-56 rounded-xl p-1.5">
+              <DropdownMenuLabel className="px-2 py-2 font-normal">
+                <span className="block truncate text-sm font-medium capitalize text-foreground">{display}</span>
+                {user?.email && <span className="mt-0.5 block truncate text-xs text-muted-foreground">{user.email}</span>}
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem asChild className="min-h-10 cursor-pointer gap-2 rounded-lg">
+                <Link href="/settings">
+                  <Settings2 className="size-4" />
+                  Settings
+                </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={toggle} className="min-h-10 cursor-pointer gap-2 rounded-lg">
+                {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
+                {theme === "dark" ? "Light mode" : "Dark mode"}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem
+                onSelect={signOut}
+                className="min-h-10 cursor-pointer gap-2 rounded-lg text-destructive focus:text-destructive"
+              >
+                <LogOut className="size-4" />
+                Sign out
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
       </header>
 
@@ -226,10 +270,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           collapsed ? "md:pl-20" : "md:pl-64",
         )}
       >
-        <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground md:px-8">
-          <span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-mint" />Your workspace</span>
-          <Button size="sm" variant="ghost" onClick={signOut} className="md:hidden" aria-label="Sign out"><LogOut /></Button>
-        </div>
         <OtpBanner />
         {children}
       </main>
