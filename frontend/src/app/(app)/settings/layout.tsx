@@ -1,6 +1,8 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+export const instant = false;
+
 export const metadata: Metadata = {
   title: "Settings",
   description: "Choose target roles, daily limits and appearance.",

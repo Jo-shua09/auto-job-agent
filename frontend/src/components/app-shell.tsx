@@ -66,24 +66,71 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   return (
-    <div className={cn("min-h-dvh bg-background", collapsed && 'sidebar-collapsed')}>
+    <div className="min-h-dvh w-full min-w-0 overflow-x-clip bg-background">
       {/* Desktop sidebar */}
-      <aside className="desktop-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar md:flex">
-        <div className="flex items-center gap-2.5 px-5 pt-6 pb-5">
-          <BrandMark />
-          <BrandName />
-        </div>
-        <Button variant="ghost" size="icon" className="ml-4 mb-3" aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'} onClick={() => setCollapsed(c => !c)}>{collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}</Button>
-
-        <div className="mx-4 mb-4 flex items-center gap-3 rounded-2xl border border-sidebar-border bg-card/60 p-3">
-          <QuotaRing />
-          <div className="min-w-0">
-            <p className="text-xs text-muted-foreground">Applied today</p>
-            <p className="font-mono text-sm font-semibold">
-              {appliedToday(history)} <span className="text-muted-foreground">/ {limit}</span>
-            </p>
+      <aside
+        className={cn(
+          "desktop-sidebar fixed inset-y-0 left-0 z-40 hidden w-64 flex-col border-r border-sidebar-border bg-sidebar transition-[width] duration-200 ease-out md:flex",
+          collapsed && "w-20",
+        )}
+      >
+        <div className={cn("flex items-center pt-5 pb-4", collapsed ? "flex-col gap-2 px-3" : "justify-between gap-2.5 px-4")}>
+          <div className="flex min-w-0 items-center gap-2.5">
+            <BrandMark />
+            {!collapsed && <BrandName />}
           </div>
-          <div className="quota-adjust ml-auto flex flex-col"><Button size="icon" variant="ghost" className="size-6" title="Increase daily limit" aria-label="Increase daily limit" onClick={() => agent.setLimit(limit+1)}><Plus /></Button><Button size="icon" variant="ghost" className="size-6" title="Decrease daily limit" aria-label="Decrease daily limit" onClick={() => agent.setLimit(limit-1)}><Minus /></Button></div>
+          <button
+            type="button"
+            className={cn(
+              "grid size-9 shrink-0 place-items-center rounded-xl text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground",
+            )}
+            aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            onClick={() => setCollapsed((value) => !value)}
+          >
+            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+          </button>
+        </div>
+
+        <div
+          className={cn(
+            "mb-4 flex items-center rounded-2xl border border-sidebar-border bg-card/60",
+            collapsed ? "mx-3 justify-center p-2" : "mx-4 gap-3 p-3",
+          )}
+        >
+          <QuotaRing size={collapsed ? 40 : 44} />
+          {!collapsed && (
+            <div className="min-w-0">
+              <p className="text-xs text-muted-foreground">Applied today</p>
+              <p className="font-mono text-sm font-semibold">
+                {appliedToday(history)} <span className="text-muted-foreground">/ {limit}</span>
+              </p>
+            </div>
+          )}
+          {!collapsed && (
+            <div className="ml-auto flex flex-col">
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-6"
+                title="Increase daily limit"
+                aria-label="Increase daily limit"
+                onClick={() => agent.setLimit(limit + 1)}
+              >
+                <Plus />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                className="size-6"
+                title="Decrease daily limit"
+                aria-label="Decrease daily limit"
+                onClick={() => agent.setLimit(limit - 1)}
+              >
+                <Minus />
+              </Button>
+            </div>
+          )}
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 px-3">
@@ -94,15 +141,25 @@ export function AppShell({ children }: { children: ReactNode }) {
                 key={to}
                 href={to}
                 title={label}
+                aria-label={label}
+                aria-current={active ? "page" : undefined}
                 className={cn(
-                  "group flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm transition-colors",
+                  "group relative flex items-center rounded-xl py-2.5 text-sm transition-colors",
+                  collapsed ? "justify-center px-0" : "gap-3 px-3",
                   active ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
                 )}
               >
                 <Icon className={cn("size-[18px] shrink-0", active && "text-mint")} />
-                <span className="flex-1">{label}</span>
+                {!collapsed && <span className="min-w-0 flex-1">{label}</span>}
                 {to === "/queue" && queueCount > 0 && (
-                  <span className="rounded-full bg-accent px-2 py-0.5 font-mono text-[10px] text-accent-foreground">{queueCount}</span>
+                  <span
+                    className={cn(
+                      "rounded-full bg-accent font-mono text-[10px] text-accent-foreground",
+                      collapsed ? "absolute top-1 right-1 grid size-4 place-items-center" : "px-2 py-0.5",
+                    )}
+                  >
+                    {queueCount}
+                  </span>
                 )}
               </Link>
             );
@@ -110,17 +167,39 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="space-y-2 p-3">
-          <button onClick={toggle} className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground">
+          <button
+            onClick={toggle}
+            aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
+            title={theme === "dark" ? "Light mode" : "Dark mode"}
+            className={cn(
+              "flex w-full items-center rounded-xl py-2.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground",
+              collapsed ? "justify-center px-0" : "gap-3 px-3",
+            )}
+          >
             {theme === "dark" ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
-            {theme === "dark" ? "Light mode" : "Dark mode"}
+            {!collapsed && (theme === "dark" ? "Light mode" : "Dark mode")}
           </button>
-          <div className="flex items-center gap-3 rounded-2xl border border-sidebar-border bg-card/60 p-2.5">
-            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary font-medium text-secondary-foreground uppercase">{display[0]}</span>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium capitalize">{display}</p>
-              <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
-            </div>
-            <button onClick={signOut} aria-label="Sign out" className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground">
+          <div
+            className={cn(
+              "flex items-center rounded-2xl border border-sidebar-border bg-card/60",
+              collapsed ? "flex-col gap-1 p-2" : "gap-3 p-2.5",
+            )}
+          >
+            <span className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary font-medium text-secondary-foreground uppercase">
+              {display[0]}
+            </span>
+            {!collapsed && (
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-sm font-medium capitalize">{display}</p>
+                <p className="truncate text-xs text-muted-foreground">{user?.email}</p>
+              </div>
+            )}
+            <button
+              onClick={signOut}
+              aria-label="Sign out"
+              title="Sign out"
+              className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground hover:bg-accent hover:text-foreground"
+            >
               <LogOut className="size-4" />
             </button>
           </div>
@@ -141,7 +220,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </header>
 
-      <main className="workspace-main pb-dock md:pb-0 md:pl-64">
+      <main
+        className={cn(
+          "workspace-main min-h-dvh min-w-0 pb-dock transition-[padding] duration-200 ease-out md:pb-0",
+          collapsed ? "md:pl-20" : "md:pl-64",
+        )}
+      >
         <div className="flex items-center justify-between gap-3 border-b border-border/50 px-4 py-2 text-[11px] text-muted-foreground md:px-8">
           <span className="flex min-w-0 items-center gap-2"><span className="size-1.5 shrink-0 rounded-full bg-mint" />Your workspace</span>
           <Button size="sm" variant="ghost" onClick={signOut} className="md:hidden" aria-label="Sign out"><LogOut /></Button>
@@ -158,7 +242,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {NAV.map(({ to, label, icon: Icon }) => {
           const active = pathname.startsWith(to);
           return (
-            <Link key={to} href={to} aria-label={label} className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1">
+            <Link key={to} href={to} aria-label={label} aria-current={active ? "page" : undefined} className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1">
               <span className={cn("grid h-8 w-12 place-items-center rounded-full transition-all duration-300", active ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>
                 <Icon className="size-[18px]" />
               </span>
@@ -174,11 +258,11 @@ export function AppShell({ children }: { children: ReactNode }) {
 
 export function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow?: string; title: ReactNode; subtitle?: string; action?: ReactNode }) {
   return (
-    <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
         {eyebrow && <p className="mb-1.5 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">{eyebrow}</p>}
-        <h1 className="font-display text-4xl leading-[1.05] sm:text-5xl">{title}</h1>
-        {subtitle && <p className="mt-2 max-w-xl text-[15px] text-muted-foreground">{subtitle}</p>}
+        <h1 className="font-display text-4xl leading-[1.05] break-words sm:text-5xl">{title}</h1>
+        {subtitle && <p className="mt-2 max-w-xl text-[15px] leading-6 text-muted-foreground">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

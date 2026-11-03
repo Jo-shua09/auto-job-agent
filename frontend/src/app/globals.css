@@ -253,36 +253,6 @@
   padding-bottom: calc(6.5rem + env(safe-area-inset-bottom));
 }
 
-@media (min-width: 768px) {
-  .desktop-sidebar,
-  .workspace-main {
-    transition:
-      width 180ms ease,
-      padding-left 180ms ease;
-  }
-  .sidebar-collapsed .desktop-sidebar {
-    width: 80px;
-  }
-  .sidebar-collapsed .workspace-main {
-    padding-left: 80px;
-  }
-  .sidebar-collapsed .desktop-sidebar > div:first-child {
-    padding-inline: 20px;
-  }
-  .sidebar-collapsed .desktop-sidebar > div:first-child > span:last-child,
-  .sidebar-collapsed .desktop-sidebar nav a > span,
-  .sidebar-collapsed .desktop-sidebar .quota-adjust,
-  .sidebar-collapsed .desktop-sidebar > div:nth-of-type(2) > div {
-    display: none;
-  }
-  .sidebar-collapsed .desktop-sidebar > div:last-child {
-    display: none;
-  }
-  .sidebar-collapsed .desktop-sidebar nav a {
-    justify-content: center;
-  }
-}
-
 :root {
   --document: oklch(1 0 0);
   --document-ink: oklch(0.22 0.02 155);
