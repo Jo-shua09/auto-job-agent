@@ -36,6 +36,12 @@ from app.services.applicator_service import (
     run_queued_applications_batch,
     get_execution_log,
 )
+import uuid
+from app.services.inbox_service import (
+    poll_gmail_inbox_sync,
+    process_and_record_email_event,
+    list_email_events,
+)
 
 app = FastAPI(title="VANGUARD - Autonomous Job Agent API", version="1.0.0")
 
@@ -395,3 +401,40 @@ def read_job_execution_log(job_id: str):
 def list_jobs_waiting_for_otp():
     """Returns any jobs currently paused in WAITING_FOR_OTP so the UI can pop up the OTP input modal."""
     return list_discovered_jobs(status_filter=JobStatus.WAITING_FOR_OTP)
+
+class SimulateEmailRequest(BaseModel):
+    sender: str = Field(default="careers@linear.app", description="Recruiter or ATS sender email")
+    subject: str = Field(
+        default="Invitation to Interview: Senior AI Frontend Engineer at Linear",
+        description="Email subject line",
+    )
+    snippet: str = Field(
+        default="Hi Joshua, our engineering team reviewed your application and AreaHustle/ResolveAI builds. We would love to schedule a 30-minute technical intro call this week.",
+        description="Email body snippet",
+    )
+
+# --- PHASE 7: GMAIL INBOX WATCHER & LIFECYCLE TRACKER ---
+
+@app.post("/api/inbox/poll")
+def trigger_gmail_inbox_poll(max_emails: int = Query(default=10, ge=1, le=50)):
+    """Polls Gmail Inbox in read-only mode, classifies recruiter replies, and updates job statuses."""
+    return poll_gmail_inbox_sync(max_emails=max_emails)
+
+@app.post("/api/inbox/simulate-email")
+def simulate_incoming_recruiter_email(req: SimulateEmailRequest):
+    """
+    Test endpoint: Simulates receiving a Confirmation, Assessment, Interview Invite, or Rejection email
+    from an applied company and automatically transitions the job state in Firestore!
+    """
+    msg_id = f"sim_email_{uuid.uuid4().hex[:8]}"
+    return process_and_record_email_event(
+        message_id=msg_id,
+        sender=req.sender,
+        subject=req.subject,
+        snippet=req.snippet,
+    )
+
+@app.get("/api/inbox/events")
+def read_tracked_email_events():
+    """Returns all classified recruiter emails and status transitions."""
+    return list_email_events()
