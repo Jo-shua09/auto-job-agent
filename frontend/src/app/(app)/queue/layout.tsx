@@ -1,12 +1,14 @@
-import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { createPageMetadata } from "@/lib/seo";
 
 export const instant = false;
 
-export const metadata: Metadata = {
+export const metadata = createPageMetadata({
+  path: "/queue",
   title: "Review queue",
-  description: "Approve tailored applications before your agent sends them.",
-};
+  description: "Review matched jobs, inspect tailored resumes and cover letters, edit screening answers, and approve each application before Verdant submits it.",
+  keywords: ["job application review", "tailored resume review", "application approval", "ATS applications", "cover letter review"],
+});
 
 export default function QueueLayout({ children }: { children: ReactNode }) {
   return children;

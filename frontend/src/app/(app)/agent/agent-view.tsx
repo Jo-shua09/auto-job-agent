@@ -76,16 +76,19 @@ export default function AgentView() {
   const [pasteText, setPasteText] = useState("");
   const [pasteMode, setPasteMode] = useState<"url" | "description">("url");
 
-  const refresh = useCallback(async () => {
-    const [feed, discovered] = await Promise.all([
+  const loadActivity = useCallback(() => Promise.all([
       apiRequest<Activity[]>("/api/agent/activity-stream"),
       apiRequest<Job[]>("/api/jobs"),
-    ]);
+  ]), []);
+
+  const refresh = useCallback(async () => {
+    const [feed, discovered] = await loadActivity();
     setActivities(feed);
     setJobs(discovered);
-  }, []);
+  }, [loadActivity]);
 
   useEffect(() => {
+    let active = true;
     Promise.all([
       apiRequest<Preferences>("/api/scout/preferences"),
       apiRequest<ProfileStatus>("/api/vault"),
@@ -99,8 +102,15 @@ export default function AgentView() {
       })
       .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load your workspace."))
       .finally(() => setLoading(false));
-    void refresh().catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load activity."));
-  }, [refresh]);
+    void loadActivity()
+      .then(([feed, discovered]) => {
+        if (!active) return;
+        setActivities(feed);
+        setJobs(discovered);
+      })
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load activity."));
+    return () => { active = false; };
+  }, [loadActivity]);
 
   useEffect(() => {
     if (!running) return;

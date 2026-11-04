@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Image from "next/image";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { auth, loginWithFirebaseEmail, loginWithFirebaseGoogle, onAuthStateChanged, registerWithFirebaseEmail } from "@/lib/firebase";
@@ -10,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { BrandMark, BrandName } from "@/components/brand";
 import { cn } from "@/lib/utils";
+import brandLogo from "../../../assets/logo.png";
 
 function StepShowcase() {
   return (
@@ -86,8 +88,7 @@ export default function AuthPage() {
     <div className="grid min-h-dvh bg-background lg:grid-cols-[minmax(0,1.05fr)_minmax(460px,0.95fr)]">
       <section className="bg-mesh grain relative hidden flex-col justify-between overflow-hidden px-10 py-9 lg:flex xl:px-16 xl:py-12">
         <div className="relative z-10 flex items-center gap-2.5">
-          <BrandMark />
-          <BrandName />
+          <Image src={brandLogo} alt="Verdant" priority className="size-20 object-contain" />
         </div>
         <div className="relative z-10 mx-auto w-full max-w-xl space-y-8">
           <div className="space-y-4">

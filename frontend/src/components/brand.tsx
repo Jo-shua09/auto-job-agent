@@ -1,22 +1,11 @@
+import Image from "next/image";
 import { cn } from "@/lib/utils";
+import brandIcon from "../../assets/icon.jpg";
 
 export function BrandMark({ className }: { className?: string }) {
   return (
-    <span className={cn("grid size-9 shrink-0 place-items-center rounded-xl bg-primary text-primary-foreground shadow-glow", className)}>
-      <svg
-        viewBox="0 0 24 24"
-        className="size-5"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        aria-hidden
-      >
-        <circle cx="12" cy="12" r="8" />
-        <circle cx="12" cy="12" r="3" />
-        <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
-      </svg>
+    <span className={cn("size-9 shrink-0 overflow-hidden rounded-xl border border-primary/20 shadow-glow", className)}>
+      <Image src={brandIcon} alt="" className="size-full object-cover" />
     </span>
   );
 }

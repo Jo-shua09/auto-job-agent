@@ -3,7 +3,21 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
-import { CalendarClock, ChevronDown, Inbox, LogOut, Moon, Settings2, ShieldCheck, Radar, Sun, PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import {
+  AlertCircle,
+  CalendarClock,
+  ChevronDown,
+  Inbox,
+  LogOut,
+  Moon,
+  Settings2,
+  ShieldCheck,
+  Radar,
+  RefreshCw,
+  Sun,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from "lucide-react";
 import { apiRequest } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import {
@@ -36,7 +50,16 @@ function QuotaRing({ size = 44, used = 0, limit = 10 }: { size?: number; used?: 
     <div className="relative shrink-0" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
         <circle cx={size / 2} cy={size / 2} r={r} className="fill-none stroke-border" strokeWidth="4" />
-        <circle cx={size / 2} cy={size / 2} r={r} className="fill-none stroke-mint transition-all duration-700" strokeWidth="4" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={c * (1 - pct)} />
+        <circle
+          cx={size / 2}
+          cy={size / 2}
+          r={r}
+          className="fill-none stroke-mint transition-all duration-700"
+          strokeWidth="4"
+          strokeLinecap="round"
+          strokeDasharray={c}
+          strokeDashoffset={c * (1 - pct)}
+        />
       </svg>
       <span className="absolute inset-0 grid place-items-center font-mono text-[11px] font-semibold">{used}</span>
     </div>
@@ -51,9 +74,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [quota, setQuota] = useState({ applied_today: 0, daily_apply_limit: 10 });
   const [queueCount, setQueueCount] = useState(0);
   const [collapsed, setCollapsed] = useState(false);
+  const [apiError, setApiError] = useState<string | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
     let active = true;
     const refresh = async () => {
+      setRefreshing(true);
       try {
         const [currentQuota, queue] = await Promise.all([
           apiRequest<{ applied_today: number; daily_apply_limit: number }>("/api/scout/quota"),
@@ -62,9 +89,12 @@ export function AppShell({ children }: { children: ReactNode }) {
         if (active) {
           setQuota(currentQuota);
           setQueueCount(queue.length);
+          setApiError(null);
         }
       } catch (error) {
-        console.error("Could not load workspace summary", error);
+        if (active) setApiError(error instanceof Error ? error.message : "Can't connect to the job service. Check that the backend is running.");
+      } finally {
+        if (active) setRefreshing(false);
       }
     };
     const unsubscribe = onAuthStateChanged(auth, (current) => {
@@ -73,11 +103,18 @@ export function AppShell({ children }: { children: ReactNode }) {
       else {
         setQueueCount(0);
         setQuota({ applied_today: 0, daily_apply_limit: 10 });
+        setApiError(null);
       }
     });
-    const timer = window.setInterval(() => { if (auth.currentUser) void refresh(); }, 15000);
-    return () => { active = false; unsubscribe(); window.clearInterval(timer); };
-  }, []);
+    const timer = window.setInterval(() => {
+      if (auth.currentUser) void refresh();
+    }, 15000);
+    return () => {
+      active = false;
+      unsubscribe();
+      window.clearInterval(timer);
+    };
+  }, [retryCount]);
   const display = user?.name || user?.email?.split("@")[0] || "You";
 
   async function signOut() {
@@ -127,10 +164,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </p>
             </div>
           )}
-          {!collapsed && (
-            <div className="ml-auto flex flex-col">
-            </div>
-          )}
+          {!collapsed && <div className="ml-auto flex flex-col"></div>}
         </div>
 
         <nav className="flex flex-1 flex-col gap-0.5 px-3">
@@ -146,10 +180,12 @@ export function AppShell({ children }: { children: ReactNode }) {
                 className={cn(
                   "group relative flex items-center rounded-xl py-2.5 text-sm transition-colors",
                   collapsed ? "justify-center px-0" : "gap-3 px-3",
-                  active ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground" : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
+                  active
+                    ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
+                    : "text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
                 )}
               >
-                <Icon className={cn("size-[18px] shrink-0", active && "text-mint")} />
+                <Icon className={cn("size-4.5 shrink-0", active && "text-mint")} />
                 {!collapsed && <span className="min-w-0 flex-1">{label}</span>}
                 {to === "/queue" && queueCount > 0 && (
                   <span
@@ -176,14 +212,11 @@ export function AppShell({ children }: { children: ReactNode }) {
               collapsed ? "justify-center px-0" : "gap-3 px-3",
             )}
           >
-            {theme === "dark" ? <Sun className="size-[18px]" /> : <Moon className="size-[18px]" />}
+            {theme === "dark" ? <Sun className="size-4.5" /> : <Moon className="size-4.5" />}
             {!collapsed && (theme === "dark" ? "Light mode" : "Dark mode")}
           </button>
           <div
-            className={cn(
-              "flex items-center rounded-2xl border border-sidebar-border bg-card/60",
-              collapsed ? "flex-col gap-1 p-2" : "gap-3 p-2.5",
-            )}
+            className={cn("flex items-center rounded-2xl border border-sidebar-border bg-card/60", collapsed ? "flex-col gap-1 p-2" : "gap-3 p-2.5")}
           >
             <span className="grid size-9 shrink-0 place-items-center rounded-full bg-secondary font-medium text-secondary-foreground uppercase">
               {display[0]}
@@ -244,10 +277,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {theme === "dark" ? "Light mode" : "Dark mode"}
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem
-                onSelect={signOut}
-                className="min-h-10 cursor-pointer gap-2 rounded-lg text-destructive focus:text-destructive"
-              >
+              <DropdownMenuItem onSelect={signOut} className="min-h-10 cursor-pointer gap-2 rounded-lg text-destructive focus:text-destructive">
                 <LogOut className="size-4" />
                 Sign out
               </DropdownMenuItem>
@@ -263,6 +293,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         )}
       >
         <OtpBanner />
+        {apiError && (
+          <div role="alert" className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 md:mx-8">
+            <AlertCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-semibold">Connection problem</p>
+              <p className="mt-1 wrap-break-word text-sm text-muted-foreground">{apiError}</p>
+            </div>
+            <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
+              <RefreshCw className={refreshing ? "animate-spin" : ""} /> Retry
+            </Button>
+          </div>
+        )}
         {children}
       </main>
 
@@ -274,12 +316,27 @@ export function AppShell({ children }: { children: ReactNode }) {
         {NAV.map(({ to, label, icon: Icon }) => {
           const active = pathname.startsWith(to);
           return (
-            <Link key={to} href={to} aria-label={label} aria-current={active ? "page" : undefined} className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1">
-              <span className={cn("grid h-8 w-12 place-items-center rounded-full transition-all duration-300", active ? "bg-primary text-primary-foreground" : "text-muted-foreground")}>
-                <Icon className="size-[18px]" />
+            <Link
+              key={to}
+              href={to}
+              aria-label={label}
+              aria-current={active ? "page" : undefined}
+              className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1"
+            >
+              <span
+                className={cn(
+                  "grid h-8 w-12 place-items-center rounded-full transition-all duration-300",
+                  active ? "bg-primary text-primary-foreground" : "text-muted-foreground",
+                )}
+              >
+                <Icon className="size-4.5" />
               </span>
-              <span className={cn("truncate text-[10px] leading-none", active ? "font-medium text-foreground" : "text-muted-foreground")}>{label}</span>
-              {to === "/queue" && queueCount > 0 && !active && <span className="absolute top-0.5 right-[calc(50%-1.25rem)] size-2 rounded-full bg-warning" />}
+              <span className={cn("truncate text-[10px] leading-none", active ? "font-medium text-foreground" : "text-muted-foreground")}>
+                {label}
+              </span>
+              {to === "/queue" && queueCount > 0 && !active && (
+                <span className="absolute top-0.5 right-[calc(50%-1.25rem)] size-2 rounded-full bg-warning" />
+              )}
             </Link>
           );
         })}
@@ -293,7 +350,7 @@ export function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow?: str
     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
         {eyebrow && <p className="mb-1.5 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">{eyebrow}</p>}
-        <h1 className="font-display text-4xl leading-[1.05] break-words sm:text-5xl">{title}</h1>
+        <h1 className="font-display text-4xl leading-[1.05] wrap-break-word sm:text-5xl">{title}</h1>
         {subtitle && <p className="mt-2 max-w-xl text-[15px] leading-6 text-muted-foreground">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}

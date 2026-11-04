@@ -29,15 +29,18 @@ type TailoredPackage = {
   cover_letter_text?: string | null;
   screening_answers: Record<string, string>;
 };
+type PackageState =
+  | { jobId: string; status: "loading" | "error" }
+  | { jobId: string; status: "loaded"; data: TailoredPackage }
+  | null;
 
 export default function QueueView() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [selectedId, setSelectedId] = useState("");
-  const [packageData, setPackageData] = useState<TailoredPackage | null>(null);
+  const [packageState, setPackageState] = useState<PackageState>(null);
   const [coverLetter, setCoverLetter] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
-  const [packageLoading, setPackageLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
 
@@ -46,7 +49,6 @@ export default function QueueView() {
     setJobs(data);
     if (selectedId && !data.some((job) => job.id === selectedId)) {
       setSelectedId("");
-      setPackageData(null);
     }
   };
 
@@ -58,20 +60,21 @@ export default function QueueView() {
   }, []);
 
   useEffect(() => {
-    if (!selectedId) { setPackageData(null); return; }
+    if (!selectedId) return;
     let active = true;
-    setPackageLoading(true);
     apiRequest<TailoredPackage>(`/api/tailor/${encodeURIComponent(selectedId)}`)
       .then((result) => {
         if (!active) return;
-        setPackageData(result);
+        setPackageState({ jobId: selectedId, status: "loaded", data: result });
         setCoverLetter(result.cover_letter_text ?? "");
         setAnswers(result.screening_answers ?? {});
       })
       .catch((error: unknown) => {
-        if (active) toast.error(error instanceof Error ? error.message : "Could not load the tailored package.");
-      })
-      .finally(() => { if (active) setPackageLoading(false); });
+        if (active) {
+          setPackageState({ jobId: selectedId, status: "error" });
+          toast.error(error instanceof Error ? error.message : "Could not load the tailored package.");
+        }
+      });
     return () => { active = false; };
   }, [selectedId]);
 
@@ -83,7 +86,7 @@ export default function QueueView() {
         cover_letter_text: coverLetter,
         screening_answers: answers,
       });
-      setPackageData(saved);
+      setPackageState({ jobId: selectedId, status: "loaded", data: saved });
       toast.success("Tailored application updated.");
       return true;
     } catch (error) {
@@ -101,7 +104,6 @@ export default function QueueView() {
       await apiRequest(`/api/apply/${encodeURIComponent(selectedId)}/execute`, "POST");
       toast.success("Application submitted to the agent.");
       setSelectedId("");
-      setPackageData(null);
       await refreshQueue();
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Could not start the application.");
@@ -110,6 +112,10 @@ export default function QueueView() {
   }
 
   const selected = jobs.find((job) => job.id === selectedId);
+  const packageData = packageState?.jobId === selectedId && packageState.status === "loaded" ? packageState.data : null;
+  const packageLoading = Boolean(selectedId) && (
+    packageState?.jobId !== selectedId || packageState.status === "loading"
+  );
   const pdfUrl = packageData?.cv_pdf_url ? (packageData.cv_pdf_url.startsWith("http") ? packageData.cv_pdf_url : `${API_URL}${packageData.cv_pdf_url}`) : null;
 
   return (
@@ -118,7 +124,7 @@ export default function QueueView() {
       {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading your review queue...</p> : jobs.length === 0 ? (
         <div className="mt-8 rounded-3xl border border-dashed border-border p-10 text-center"><p className="ui-title">Nothing waiting for review</p><p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">No tailored applications waiting for approval yet. Run the Scout or paste a job link to generate tailored ATS packages.</p><Button asChild variant="hero" className="mt-5"><Link href="/agent">Go to Command Center</Link></Button></div>
       ) : <div className="mt-8 grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
-        <ul className="space-y-2">{jobs.map((job) => <li key={job.id}><button type="button" onClick={() => setSelectedId(job.id)} className={`w-full rounded-2xl border p-4 text-left ${selectedId === job.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30"}`}><p className="font-medium">{job.role_title}</p><p className="mt-1 text-sm text-muted-foreground">{job.company_name}</p><p className="mt-3 text-xs text-muted-foreground">{job.match_score}% match · {job.location_type} · {job.ats_platform}</p></button></li>)}</ul>
+        <ul className="space-y-2">{jobs.map((job) => <li key={job.id}><button type="button" onClick={() => { if (selectedId !== job.id) setPackageState({ jobId: job.id, status: "loading" }); setSelectedId(job.id); }} className={`w-full rounded-2xl border p-4 text-left ${selectedId === job.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30"}`}><p className="font-medium">{job.role_title}</p><p className="mt-1 text-sm text-muted-foreground">{job.company_name}</p><p className="mt-3 text-xs text-muted-foreground">{job.match_score}% match · {job.location_type} · {job.ats_platform}</p></button></li>)}</ul>
         {!selectedId ? <div className="grid min-h-60 place-items-center rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Select an application to review its tailored package.</div> : selected && <section className="min-w-0 space-y-5 rounded-3xl border border-border bg-card p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-3xl">{selected.role_title}</h2><p className="mt-1 text-muted-foreground">{selected.company_name} · {selected.location_type} · {selected.match_score}% match</p>{selected.match_reasoning && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{selected.match_reasoning}</p>}</div><Button asChild size="sm" variant="outline"><a href={selected.external_url} target="_blank" rel="noreferrer"><ExternalLink /> Job post</a></Button></div>
           {packageLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading tailored application...</p> : !packageData ? <p className="py-6 text-sm text-muted-foreground">The tailored package is not available.</p> : <>

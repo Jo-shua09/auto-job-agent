@@ -23,7 +23,7 @@ const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 export const auth = getAuth(app);
 const googleProvider = new GoogleAuthProvider();
 
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
 /**
  * Sends the real Firebase JWT (idToken) to our FastAPI backend (/api/auth/session)
@@ -33,18 +33,29 @@ async function syncSessionWithBackend(user: User, fullNameOverride?: string) {
   const idToken = await user.getIdToken(true);
   localStorage.setItem("vanguard_token", idToken);
 
-  const res = await fetch(`${API_BASE}/api/auth/session`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      id_token: idToken,
-      full_name: fullNameOverride || user.displayName,
-    }),
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}/api/auth/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        id_token: idToken,
+        full_name: fullNameOverride || user.displayName,
+      }),
+    });
+  } catch (error) {
+    if (error instanceof TypeError) {
+      throw new Error(
+        `Your sign-in worked, but we couldn't connect to the job service at ${API_BASE}. Check that the backend is running and that its FRONTEND_ORIGINS setting allows this website.`,
+      );
+    }
+    throw error;
+  }
 
   if (!res.ok) {
-    const err = await res.json();
-    throw new Error(err.detail || "Backend session verification failed");
+    const err: unknown = await res.json().catch(() => null);
+    const detail = err && typeof err === "object" && "detail" in err && typeof err.detail === "string" ? err.detail : null;
+    throw new Error(detail || "We couldn't verify your session with the job service. Please try signing in again.");
   }
 
   const data = await res.json();
