@@ -1,3 +1,4 @@
+import json
 import os
 from contextvars import ContextVar
 import firebase_admin
@@ -7,15 +8,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 cred_path = os.getenv("FIREBASE_CREDENTIALS_PATH", "./credentials/serviceAccountKey.json")
+service_account_json = os.getenv("FIREBASE_SERVICE_ACCOUNT_JSON")
 project_id = os.getenv("FIREBASE_PROJECT_ID")
 bucket_name = os.getenv("FIREBASE_STORAGE_BUCKET")
 
 if not firebase_admin._apps:
     if os.path.exists(cred_path):
-        # Uses JSON file if present
         cred = credentials.Certificate(cred_path)
+    elif service_account_json:
+        try:
+            service_account_info = json.loads(service_account_json)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON must contain valid service-account JSON.") from error
+        if not isinstance(service_account_info, dict):
+            raise RuntimeError("FIREBASE_SERVICE_ACCOUNT_JSON must contain a service-account JSON object.")
+        cred = credentials.Certificate(service_account_info)
+        project_id = project_id or service_account_info.get("project_id")
     else:
-        # Keyless fallback using `gcloud auth application-default login`
         cred = credentials.ApplicationDefault()
 
     firebase_admin.initialize_app(cred, {
