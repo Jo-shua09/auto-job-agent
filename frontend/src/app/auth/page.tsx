@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { auth, loginWithFirebaseEmail, loginWithFirebaseGoogle, onAuthStateChanged, registerWithFirebaseEmail } from "@/lib/firebase";
+import { auth, getFirebaseErrorMessage, loginWithFirebaseEmail, loginWithFirebaseGoogle, onAuthStateChanged, registerWithFirebaseEmail } from "@/lib/firebase";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,9 +31,17 @@ export default function AuthPage() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
+  const [configurationError, setConfigurationError] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!auth) {
+      const timer = window.setTimeout(() => {
+        setConfigurationError(true);
+        setCheckingSession(false);
+      }, 0);
+      return () => window.clearTimeout(timer);
+    }
     return onAuthStateChanged(auth, (user) => {
       if (user) router.replace("/agent");
       else setCheckingSession(false);
@@ -54,7 +62,7 @@ export default function AuthPage() {
         setSent("Email recovery is not connected. Return to sign in to continue.");
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Something went wrong");
+      toast.error(getFirebaseErrorMessage(err, "We couldn't sign you in. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -66,7 +74,7 @@ export default function AuthPage() {
       await loginWithFirebaseGoogle();
       router.replace("/agent");
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Google sign-in failed");
+      toast.error(getFirebaseErrorMessage(err, "We couldn't sign you in with Google. Please try again."));
     } finally {
       setBusy(false);
     }
@@ -127,6 +135,12 @@ export default function AuthPage() {
                   : "Sign in to pick up where your job search left off."}
             </p>
           </div>
+
+          {configurationError && (
+            <p role="alert" className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+              Sign-in is temporarily unavailable. Please try again later.
+            </p>
+          )}
 
           {mode !== "forgot" && (
             <div className="mt-7 grid grid-cols-2 rounded-xl border border-border/70 bg-muted/70 p-1">

@@ -15,6 +15,7 @@ export function OtpBanner() {
   const [code, setCode] = useState("");
 
   useEffect(() => {
+    if (!auth) return;
     let active = true;
     let timer: number | undefined;
     const refresh = () =>

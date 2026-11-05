@@ -13,7 +13,9 @@ async function getErrorMessage(response: Response): Promise<string> {
   }
 
   if (response.status >= 500) return "The job service is temporarily unavailable. Please try again shortly.";
-  if (typeof detail === "string" && detail.trim()) return detail;
+  if (typeof detail === "string" && detail.trim() && !/(firebase|traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
+    return detail;
+  }
   if (Array.isArray(detail)) {
     const messages = detail
       .map((item) => (item && typeof item === "object" && "msg" in item ? item.msg : null))
@@ -48,9 +50,7 @@ export async function apiRequest<T>(path: string, optionsOrMethod: RequestInit |
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(
-        `We couldn't connect to the job service at ${API_BASE}. Check that the backend is running, NEXT_PUBLIC_API_URL is reachable from your browser, and FRONTEND_ORIGINS allows this website.`,
-      );
+      throw new Error("We couldn't connect to your workspace right now. Check your internet connection and try again.");
     }
     throw error;
   }

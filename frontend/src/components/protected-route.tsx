@@ -10,6 +10,10 @@ export function ProtectedRoute({ children }: { children: ReactNode }) {
   const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
+    if (!auth) {
+      router.replace("/auth");
+      return;
+    }
     return onAuthStateChanged(auth, (user) => {
       if (user) setAuthenticated(true);
       else router.replace("/auth");

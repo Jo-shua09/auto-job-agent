@@ -1,5 +1,6 @@
 import { initializeApp, getApps, getApp } from "firebase/app";
 import {
+  type Auth,
   getAuth,
   GoogleAuthProvider,
   signInWithPopup,
@@ -8,7 +9,7 @@ import {
   updateProfile,
   signOut,
   onAuthStateChanged,
-  User,
+  type User,
 } from "firebase/auth";
 
 const firebaseConfig = {
@@ -19,9 +20,58 @@ const firebaseConfig = {
   appId: process.env.NEXT_PUBLIC_FIREBASE_APP_ID,
 };
 
-const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-export const auth = getAuth(app);
-const googleProvider = new GoogleAuthProvider();
+const hasFirebaseConfig = Boolean(
+  firebaseConfig.apiKey &&
+  firebaseConfig.authDomain &&
+  firebaseConfig.projectId &&
+  firebaseConfig.appId,
+);
+const app = typeof window !== "undefined" && hasFirebaseConfig
+  ? getApps().length > 0 ? getApp() : initializeApp(firebaseConfig)
+  : null;
+export const auth: Auth | null = app ? getAuth(app) : null;
+
+function requireAuth(): Auth {
+  if (!auth) {
+    throw new Error(
+      "Firebase authentication is not configured. Set NEXT_PUBLIC_FIREBASE_API_KEY, NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN, NEXT_PUBLIC_FIREBASE_PROJECT_ID, and NEXT_PUBLIC_FIREBASE_APP_ID in the deployment environment, then rebuild.",
+    );
+  }
+  return auth;
+}
+
+export function getFirebaseErrorMessage(error: unknown, fallback: string): string {
+  const code =
+    error && typeof error === "object" && "code" in error && typeof error.code === "string"
+      ? error.code
+      : "";
+
+  switch (code) {
+    case "auth/invalid-api-key":
+    case "auth/operation-not-allowed":
+      return "Sign-in is temporarily unavailable. Please try again later.";
+    case "auth/invalid-credential":
+    case "auth/wrong-password":
+    case "auth/user-not-found":
+      return "That email and password combination doesn't match. Check your details and try again.";
+    case "auth/email-already-in-use":
+      return "An account with this email already exists. Try signing in instead.";
+    case "auth/weak-password":
+      return "Choose a stronger password with at least six characters.";
+    case "auth/invalid-email":
+      return "Enter a valid email address and try again.";
+    case "auth/popup-closed-by-user":
+      return "Sign-in was cancelled. Try again when you're ready.";
+    case "auth/popup-blocked":
+      return "Your browser blocked the sign-in window. Allow pop-ups and try again.";
+    case "auth/network-request-failed":
+      return "We couldn't connect. Check your internet connection and try again.";
+    case "auth/too-many-requests":
+      return "There have been too many attempts. Wait a little while, then try again.";
+    default:
+      return fallback;
+  }
+}
 
 const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 
@@ -45,17 +95,13 @@ async function syncSessionWithBackend(user: User, fullNameOverride?: string) {
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error(
-        `Your sign-in worked, but we couldn't connect to the job service at ${API_BASE}. Check that the backend is running and that its FRONTEND_ORIGINS setting allows this website.`,
-      );
+      throw new Error("Your sign-in worked, but we couldn't finish setting up your workspace. Please try again shortly.");
     }
     throw error;
   }
 
   if (!res.ok) {
-    const err: unknown = await res.json().catch(() => null);
-    const detail = err && typeof err === "object" && "detail" in err && typeof err.detail === "string" ? err.detail : null;
-    throw new Error(detail || "We couldn't verify your session with the job service. Please try signing in again.");
+    throw new Error("We couldn't finish setting up your workspace. Please try signing in again.");
   }
 
   const data = await res.json();
@@ -65,7 +111,7 @@ async function syncSessionWithBackend(user: User, fullNameOverride?: string) {
 
 // 1. Real Email & Password Sign Up
 export async function registerWithFirebaseEmail(fullName: string, email: string, pass: string) {
-  const cred = await createUserWithEmailAndPassword(auth, email, pass);
+  const cred = await createUserWithEmailAndPassword(requireAuth(), email, pass);
   if (fullName) {
     await updateProfile(cred.user, { displayName: fullName });
   }
@@ -74,26 +120,26 @@ export async function registerWithFirebaseEmail(fullName: string, email: string,
 
 // 2. Real Email & Password Sign In
 export async function loginWithFirebaseEmail(email: string, pass: string) {
-  const cred = await signInWithEmailAndPassword(auth, email, pass);
+  const cred = await signInWithEmailAndPassword(requireAuth(), email, pass);
   return await syncSessionWithBackend(cred.user);
 }
 
 // 3. Real "Continue with Google" Popup Sign In
 export async function loginWithFirebaseGoogle() {
-  const cred = await signInWithPopup(auth, googleProvider);
+  const cred = await signInWithPopup(requireAuth(), new GoogleAuthProvider());
   return await syncSessionWithBackend(cred.user);
 }
 
 // 4. Sign Out
 export async function logoutFirebaseUser() {
-  await signOut(auth);
+  await signOut(requireAuth());
   localStorage.removeItem("vanguard_token");
   localStorage.removeItem("vanguard_user");
 }
 
 // 5. Helper to get a fresh Bearer header for any FastAPI call
 export async function getAuthHeaders(): Promise<Record<string, string>> {
-  const currentUser = auth.currentUser;
+  const currentUser = auth?.currentUser;
   if (currentUser) {
     const freshToken = await currentUser.getIdToken();
     localStorage.setItem("vanguard_token", freshToken);

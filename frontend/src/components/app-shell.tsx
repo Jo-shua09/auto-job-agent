@@ -78,6 +78,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
+    const authClient = auth;
+    if (!authClient) return;
     let active = true;
     const refresh = async () => {
       setRefreshing(true);
@@ -91,13 +93,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           setQueueCount(queue.length);
           setApiError(null);
         }
-      } catch (error) {
-        if (active) setApiError(error instanceof Error ? error.message : "Can't connect to the job service. Check that the backend is running.");
+      } catch {
+        if (active) setApiError("We couldn't refresh your workspace right now. Please try again.");
       } finally {
         if (active) setRefreshing(false);
       }
     };
-    const unsubscribe = onAuthStateChanged(auth, (current) => {
+    const unsubscribe = onAuthStateChanged(authClient, (current) => {
       setUser(current ? { name: current.displayName ?? "", email: current.email ?? "" } : null);
       if (current) void refresh();
       else {
@@ -107,7 +109,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       }
     });
     const timer = window.setInterval(() => {
-      if (auth.currentUser) void refresh();
+      if (authClient.currentUser) void refresh();
     }, 15000);
     return () => {
       active = false;
