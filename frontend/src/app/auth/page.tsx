@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
@@ -25,7 +25,29 @@ function StepShowcase() {
 }
 
 function GoogleSignInButton({ disabled, onSuccess }: { disabled: boolean; onSuccess: (credential: string) => void }) {
+  const buttonContainerRef = useRef<HTMLDivElement>(null);
+  const [buttonWidth, setButtonWidth] = useState(200);
   const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+
+  useEffect(() => {
+    const container = buttonContainerRef.current;
+    if (!container) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+
+      const availableWidth = Math.floor(entry.contentRect.width);
+      setButtonWidth((currentWidth) => {
+        const nextWidth = Math.min(400, Math.max(200, availableWidth));
+        return currentWidth === nextWidth ? currentWidth : nextWidth;
+      });
+    });
+
+    resizeObserver.observe(container);
+    return () => resizeObserver.disconnect();
+  }, []);
+
   if (!clientId) {
     return (
       <Button variant="outline" size="lg" className="w-full bg-card" disabled>
@@ -36,12 +58,17 @@ function GoogleSignInButton({ disabled, onSuccess }: { disabled: boolean; onSucc
 
   return (
     <GoogleOAuthProvider clientId={clientId}>
-      <div className={`flex justify-center [&>div]:max-w-full ${disabled ? "pointer-events-none opacity-60" : ""}`}>
+      <div
+        ref={buttonContainerRef}
+        className={`flex min-h-12 w-full min-w-0 items-center justify-center overflow-hidden rounded-xl shadow-sm transition-shadow hover:shadow-md [&>div]:max-w-full ${disabled ? "pointer-events-none opacity-60" : ""}`}
+      >
         <GoogleLogin
-          width="360"
+          width={buttonWidth}
           theme="outline"
           size="large"
-          shape="rectangular"
+          text="signin_with"
+          shape="pill"
+          logo_alignment="left"
           onSuccess={(response) => {
             if (response.credential) onSuccess(response.credential);
             else toast.error("Google did not return a sign-in credential. Please try again.");
