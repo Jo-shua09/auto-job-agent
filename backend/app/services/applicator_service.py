@@ -10,7 +10,7 @@ from playwright.sync_api import sync_playwright, Page
 from google import genai
 from google.genai import types
 
-from app.core.firebase import get_user_ref
+from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
     JobStatus,

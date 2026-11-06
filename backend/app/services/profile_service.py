@@ -6,7 +6,7 @@ from typing import List, Any
 from pypdf import PdfReader
 from google import genai
 from google.genai import types
-from app.core.firebase import get_user_ref
+from app.core.database import get_user_ref
 from app.models.schemas import (
     MasterProfile,
     ScoutPreferences,
@@ -198,3 +198,33 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     clean_payload = clean_no_em_dash(parsed_profile.model_dump(mode="json"))
     user_ref.collection("vault").document("master_profile").set(clean_payload)
     return clean_payload
+
+
+def initialize_blank_user_vault(user_id: str) -> dict:
+    user_ref = get_user_ref(user_id)
+    profile_ref = user_ref.collection("vault").document("master_profile")
+    preferences_ref = user_ref.collection("vault").document("scout_preferences")
+
+    if not profile_ref.get().exists:
+        profile_ref.set(MasterProfile(user_id=user_id).model_dump(mode="json"))
+    if not preferences_ref.get().exists:
+        preferences_ref.set(get_default_scout_preferences(user_id).model_dump(mode="json"))
+
+    return {
+        "profile": get_master_profile(user_id),
+        "scout_preferences": get_scout_preferences(user_id),
+    }
+
+
+def reset_user_workspace_to_blank(user_id: str) -> dict:
+    user_ref = get_user_ref(user_id)
+    for collection_name in (
+        "vault",
+        "jobs",
+        "tailored_packages",
+        "execution_logs",
+        "email_events",
+        "activity_stream",
+    ):
+        user_ref.collection(collection_name).delete()
+    return initialize_blank_user_vault(user_id)

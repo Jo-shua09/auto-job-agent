@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 
-from app.core.firebase import get_user_ref
+from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
     JobStatus,

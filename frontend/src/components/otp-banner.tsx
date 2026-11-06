@@ -6,7 +6,7 @@ import { toast } from "sonner";
 import { InputOTP, InputOTPGroup, InputOTPSlot } from "@/components/ui/input-otp";
 import { Button } from "@/components/ui/button";
 import { apiRequest } from "@/lib/api";
-import { auth, onAuthStateChanged } from "@/lib/firebase";
+import { getAuthToken, onSessionChange } from "@/lib/auth";
 
 type WaitingJob = { id: string; company_name: string; role_title: string };
 
@@ -15,7 +15,6 @@ export function OtpBanner() {
   const [code, setCode] = useState("");
 
   useEffect(() => {
-    if (!auth) return;
     let active = true;
     let timer: number | undefined;
     const refresh = () =>
@@ -24,18 +23,23 @@ export function OtpBanner() {
           if (active) setJob(jobs[0] ?? null);
         })
         .catch(() => undefined);
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
+
+    const updatePolling = () => {
       if (timer !== undefined) window.clearInterval(timer);
-      if (!user) {
+      if (!getAuthToken()) {
         setJob(null);
         return;
       }
       void refresh();
       timer = window.setInterval(() => void refresh(), 15000);
-    });
+    };
+
+    const unsubscribe = onSessionChange(updatePolling);
+    const startupTimer = window.setTimeout(updatePolling, 0);
     return () => {
       active = false;
       unsubscribe();
+      window.clearTimeout(startupTimer);
       if (timer !== undefined) window.clearInterval(timer);
     };
   }, []);

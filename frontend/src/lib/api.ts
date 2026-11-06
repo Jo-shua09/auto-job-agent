@@ -1,4 +1,4 @@
-import { getAuthHeaders } from "./firebase";
+import { getAuthHeaders } from "./auth";
 
 export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const API_URL = API_BASE;
@@ -13,7 +13,7 @@ async function getErrorMessage(response: Response): Promise<string> {
   }
 
   if (response.status >= 500) return "The job service is temporarily unavailable. Please try again shortly.";
-  if (typeof detail === "string" && detail.trim() && !/(firebase|traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
+  if (typeof detail === "string" && detail.trim() && !/(traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
     return detail;
   }
   if (Array.isArray(detail)) {

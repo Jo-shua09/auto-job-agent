@@ -7,11 +7,12 @@ from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Depends
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.core.firebase import get_user_ref
+from app.core.database import db, get_user_ref
 from app.models.schemas import MasterProfile, TailoredPackage, JobStatus
 from app.services.auth_service import (
-    verify_real_firebase_id_token,
-    firebase_rest_email_signup_or_login,
+    login_email_user,
+    login_google_user,
+    register_email_user,
     get_current_user,
 )
 from app.services.profile_service import (
@@ -77,14 +78,13 @@ app.mount("/pdfs", StaticFiles(directory=str(GENERATED_PDF_DIR)), name="pdfs")
 
 # --- REQUEST SCHEMAS ---
 
-class FirebaseTokenRequest(BaseModel):
-    id_token: str = Field(description="Firebase ID Token from user.getIdToken() on the frontend")
-    full_name: Optional[str] = Field(default=None)
-
 class EmailPasswordAuthRequest(BaseModel):
     email: str
-    password: str = Field(min_length=6)
+    password: str = Field(min_length=8, max_length=128)
     full_name: Optional[str] = Field(default="")
+
+class GoogleAuthRequest(BaseModel):
+    credential: str = Field(min_length=1)
 
 class UpdateRolesRequest(BaseModel):
     target_role_titles: List[str]
@@ -124,43 +124,29 @@ class SimulateEmailRequest(BaseModel):
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "app": "Verdant", "firestore_connected": True}
-
-@app.post("/api/auth/session")
-def establish_firebase_session(req: FirebaseTokenRequest):
-    """Verifies a Firebase JWT from the frontend and initializes a blank Vault if the user is new."""
-    try:
-        res = verify_real_firebase_id_token(req.id_token)
-        uid = res["user"]["user_id"]
-        if req.full_name and uid:
-            get_user_ref(uid).set({"full_name": clean_no_em_dash(req.full_name)}, merge=True)
-            res["user"]["full_name"] = clean_no_em_dash(req.full_name)
-        return res
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+    db.command("ping")
+    return {"status": "ok", "app": "Verdant", "mongodb_connected": True}
 
 @app.post("/api/auth/register")
-async def auth_register_email(req: EmailPasswordAuthRequest):
+def auth_register_email(req: EmailPasswordAuthRequest):
     try:
-        return await firebase_rest_email_signup_or_login(
-            email=req.email,
-            password=req.password,
-            full_name=req.full_name,
-            is_signup=True,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        return register_email_user(req.email, req.password, req.full_name)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
 
 @app.post("/api/auth/login")
-async def auth_login_email(req: EmailPasswordAuthRequest):
+def auth_login_email(req: EmailPasswordAuthRequest):
     try:
-        return await firebase_rest_email_signup_or_login(
-            email=req.email,
-            password=req.password,
-            is_signup=False,
-        )
-    except ValueError as e:
-        raise HTTPException(status_code=401, detail=str(e))
+        return login_email_user(req.email, req.password)
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
+
+@app.post("/api/auth/google")
+def auth_google(req: GoogleAuthRequest):
+    try:
+        return login_google_user(req.credential)
+    except ValueError as error:
+        raise HTTPException(status_code=401, detail=str(error)) from error
 
 @app.get("/api/auth/me")
 async def auth_current_user(current_user: dict = Depends(get_current_user)):

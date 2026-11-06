@@ -1,158 +1,218 @@
+import base64
+import hashlib
+import hmac
 import os
-import httpx
-from datetime import datetime, timezone
-from typing import Optional
+import secrets
+import uuid
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import jwt
 from fastapi import Header, HTTPException
-from firebase_admin import auth as firebase_auth
+from google.auth.transport.requests import Request
+from google.oauth2 import id_token
+from pymongo.errors import DuplicateKeyError
 
-from app.core.firebase import db, get_user_ref
-from app.services.profile_service import clean_no_em_dash
+from app.core.database import db, ensure_indexes, get_user_ref
 
-def resolve_tenant_uid(firebase_uid: str, email: str = "") -> str:
-    """Keep every account's Firestore data isolated by its Firebase UID."""
-    return firebase_uid
+PASSWORD_SCRYPT_N = 1 << 14
+PASSWORD_SCRYPT_R = 8
+PASSWORD_SCRYPT_P = 1
+TOKEN_LIFETIME = timedelta(days=7)
 
-def sync_firebase_user_to_firestore(
-    firebase_uid: str,
-    email: str,
-    full_name: Optional[str] = None,
-    photo_url: Optional[str] = None,
-) -> dict:
-    """
-    Creates or updates the user's Firestore tenant document (`users/{uid}`).
-    """
-    tenant_uid = resolve_tenant_uid(firebase_uid, email)
-    user_ref = get_user_ref(tenant_uid)
-    snap = user_ref.get()
-    existing = snap.to_dict() if snap.exists else {}
 
-    display_name = clean_no_em_dash(
-        full_name or existing.get("full_name") or email.split("@")[0].title()
+def _jwt_secret() -> str:
+    secret = os.getenv("AUTH_JWT_SECRET", "")
+    if len(secret) < 32:
+        raise HTTPException(
+            status_code=503,
+            detail="Authentication is not configured. Set AUTH_JWT_SECRET to a random value of at least 32 characters.",
+        )
+    return secret
+
+
+def _normalize_email(email: str) -> str:
+    normalized = email.strip().lower()
+    if normalized.count("@") != 1 or "." not in normalized.rsplit("@", 1)[-1]:
+        raise ValueError("Enter a valid email address.")
+    return normalized
+
+
+def _hash_password(password: str) -> str:
+    salt = secrets.token_bytes(16)
+    derived = hashlib.scrypt(
+        password.encode("utf-8"),
+        salt=salt,
+        n=PASSWORD_SCRYPT_N,
+        r=PASSWORD_SCRYPT_R,
+        p=PASSWORD_SCRYPT_P,
+        dklen=64,
     )
+    salt_value = base64.urlsafe_b64encode(salt).decode("ascii")
+    digest_value = base64.urlsafe_b64encode(derived).decode("ascii")
+    return f"scrypt${salt_value}${digest_value}"
 
-    user_payload = {
-        "user_id": tenant_uid,
-        "firebase_uid": firebase_uid,
-        "email": email.lower(),
-        "full_name": display_name,
-        "photo_url": photo_url or existing.get("photo_url"),
-        "role": existing.get("role", "member"),
-        "agent_mode": existing.get("agent_mode", "95_PERCENT_AUTO"),
-        "last_login_at": datetime.now(timezone.utc).isoformat(),
-    }
-    if not existing.get("created_at"):
-        user_payload["created_at"] = datetime.now(timezone.utc).isoformat()
 
-    user_ref.set(user_payload, merge=True)
-
-    return user_payload
-
-def verify_real_firebase_id_token(id_token: str) -> dict:
-    """
-    Verifies a real Firebase ID Token (JWT) from the frontend Firebase SDK
-    using firebase_admin.auth.verify_id_token().
-    """
+def _verify_password(password: str, password_hash: str | None) -> bool:
+    if not password_hash:
+        return False
     try:
-        decoded = firebase_auth.verify_id_token(id_token, check_revoked=False)
-    except Exception as e:
-        raise ValueError(f"Invalid or expired Firebase ID token: {str(e)}")
+        algorithm, salt_value, digest_value = password_hash.split("$", 2)
+        if algorithm != "scrypt":
+            return False
+        salt = base64.urlsafe_b64decode(salt_value.encode("ascii"))
+        expected = base64.urlsafe_b64decode(digest_value.encode("ascii"))
+        actual = hashlib.scrypt(
+            password.encode("utf-8"),
+            salt=salt,
+            n=PASSWORD_SCRYPT_N,
+            r=PASSWORD_SCRYPT_R,
+            p=PASSWORD_SCRYPT_P,
+            dklen=len(expected),
+        )
+        return hmac.compare_digest(actual, expected)
+    except (ValueError, TypeError):
+        return False
 
-    firebase_uid = decoded["uid"]
-    email = decoded.get("email") or f"{firebase_uid}@firebase.user"
-    name = decoded.get("name")
-    picture = decoded.get("picture")
 
-    user_record = sync_firebase_user_to_firestore(
-        firebase_uid=firebase_uid,
-        email=email,
-        full_name=name,
-        photo_url=picture,
-    )
+def _public_user(user: dict[str, Any]) -> dict[str, Any]:
     return {
-        "authenticated": True,
-        "user": user_record,
+        "user_id": user["user_id"],
+        "email": user["email"],
+        "full_name": user.get("full_name", ""),
+        "photo_url": user.get("photo_url"),
+        "role": user.get("role", "member"),
+        "agent_mode": user.get("agent_mode", "95_PERCENT_AUTO"),
     }
 
-async def get_current_user(authorization: Optional[str] = Header(default=None)) -> dict:
-    """FastAPI dependency that requires a real Firebase ID token."""
-    if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="A Firebase bearer token is required.")
-    token = authorization.replace("Bearer ", "", 1).strip()
+
+def _issue_session(user: dict[str, Any]) -> dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    token = jwt.encode(
+        {
+            "sub": user["user_id"],
+            "iat": now,
+            "exp": now + TOKEN_LIFETIME,
+            "iss": "verdant-api",
+        },
+        _jwt_secret(),
+        algorithm="HS256",
+    )
+    return {"authenticated": True, "token": token, "user": _public_user(user)}
+
+
+def register_email_user(email: str, password: str, full_name: str | None = None) -> dict:
+    _jwt_secret()
+    normalized_email = _normalize_email(email)
+    ensure_indexes()
+    if db.users.find_one({"email": normalized_email}, {"_id": 1}):
+        raise ValueError("An account with this email already exists. Try signing in instead.")
+
+    user_id = uuid.uuid4().hex
+    now = datetime.now(timezone.utc).isoformat()
+    user = {
+        "user_id": user_id,
+        "email": normalized_email,
+        "full_name": (full_name or "").strip() or normalized_email.split("@")[0].title(),
+        "password_hash": _hash_password(password),
+        "auth_provider": "password",
+        "role": "member",
+        "agent_mode": "95_PERCENT_AUTO",
+        "created_at": now,
+        "last_login_at": now,
+    }
     try:
-        verified = verify_real_firebase_id_token(token)
-        return verified["user"]
-    except ValueError as exc:
-        raise HTTPException(status_code=401, detail=str(exc))
+        get_user_ref(user_id).set(user)
+    except DuplicateKeyError as error:
+        raise ValueError("An account with this email already exists. Try signing in instead.") from error
+    return _issue_session(user)
 
-# --- OPTIONAL: REST API SIGN-IN/SIGN-UP FOR TESTING DIRECTLY IN SWAGGER /DOCS ---
 
-async def firebase_rest_email_signup_or_login(
-    email: str,
-    password: str,
-    full_name: Optional[str] = None,
-    is_signup: bool = False,
-) -> dict:
-    """
-    Uses Firebase Auth REST API (if FIREBASE_WEB_API_KEY is in .env) or Admin SDK
-    so you can test real Firebase Email/Password creation right inside http://localhost:8000/docs!
-    """
-    web_api_key = os.getenv("FIREBASE_WEB_API_KEY")
+def login_email_user(email: str, password: str) -> dict:
+    _jwt_secret()
+    normalized_email = _normalize_email(email)
+    ensure_indexes()
+    user = db.users.find_one({"email": normalized_email})
+    if not user or not _verify_password(password, user.get("password_hash")):
+        raise ValueError("That email and password combination doesn't match.")
 
-    if is_signup and not web_api_key:
-        # Create user directly in Firebase Auth via Admin SDK if Web API Key isn't in .env yet
-        try:
-            fb_user = firebase_auth.create_user(
-                email=email.strip(),
-                password=password,
-                display_name=full_name or email.split("@")[0].title(),
-            )
-        except firebase_auth.EmailAlreadyExistsError:
-            fb_user = firebase_auth.get_user_by_email(email.strip())
+    now = datetime.now(timezone.utc).isoformat()
+    get_user_ref(user["user_id"]).update({"last_login_at": now})
+    user["last_login_at"] = now
+    return _issue_session(user)
 
-        user_doc = sync_firebase_user_to_firestore(
-            firebase_uid=fb_user.uid,
-            email=fb_user.email,
-            full_name=fb_user.display_name,
+
+def login_google_user(credential: str) -> dict:
+    _jwt_secret()
+    client_id = os.getenv("GOOGLE_CLIENT_ID", "").strip()
+    if not client_id:
+        raise HTTPException(
+            status_code=503,
+            detail="Google sign-in is not configured. Set GOOGLE_CLIENT_ID on the backend.",
         )
-        custom_token = firebase_auth.create_custom_token(fb_user.uid).decode("utf-8")
-        return {"authenticated": True, "custom_token": custom_token, "user": user_doc}
+    try:
+        claims = id_token.verify_oauth2_token(credential, Request(), audience=client_id)
+    except (ValueError, jwt.InvalidTokenError) as error:
+        raise ValueError("Google sign-in could not be verified. Please try again.") from error
 
-    if not web_api_key:
-        raise ValueError(
-            "Add FIREBASE_WEB_API_KEY=AIzaSy... to backend/.env to use password sign-in via REST, "
-            "or sign in directly from the Frontend using the Firebase Web SDK."
-        )
+    email = claims.get("email")
+    if not email or claims.get("email_verified") is not True:
+        raise ValueError("Google must provide a verified email address to create an account.")
 
-    endpoint = "signUp" if is_signup else "signInWithPassword"
-    url = f"https://identitytoolkit.googleapis.com/v1/accounts:{endpoint}?key={web_api_key}"
-
-    async with httpx.AsyncClient(timeout=12.0) as client:
-        resp = await client.post(
-            url,
-            json={"email": email.strip(), "password": password, "returnSecureToken": True},
-        )
-        data = resp.json()
-        if resp.status_code != 200:
-            err_msg = data.get("error", {}).get("message", "Firebase Authentication failed")
-            raise ValueError(f"Firebase Auth Error: {err_msg}")
-
-        id_token = data["idToken"]
-        firebase_uid = data["localId"]
-
-        if is_signup and full_name:
-            try:
-                firebase_auth.update_user(firebase_uid, display_name=full_name)
-            except Exception:
-                pass
-
-        user_doc = sync_firebase_user_to_firestore(
-            firebase_uid=firebase_uid,
-            email=email.strip(),
-            full_name=full_name,
-        )
-        return {
-            "authenticated": True,
-            "id_token": id_token,
-            "refresh_token": data.get("refreshToken"),
-            "user": user_doc,
+    normalized_email = _normalize_email(email)
+    ensure_indexes()
+    now = datetime.now(timezone.utc).isoformat()
+    user = db.users.find_one({"email": normalized_email})
+    if user:
+        updates: dict[str, Any] = {
+            "last_login_at": now,
+            "google_sub": claims.get("sub"),
         }
+        if not user.get("full_name") and claims.get("name"):
+            updates["full_name"] = claims["name"]
+        if claims.get("picture") and not user.get("photo_url"):
+            updates["photo_url"] = claims["picture"]
+        get_user_ref(user["user_id"]).update(updates)
+        user.update(updates)
+    else:
+        user_id = uuid.uuid4().hex
+        user = {
+            "user_id": user_id,
+            "email": normalized_email,
+            "full_name": claims.get("name") or normalized_email.split("@")[0].title(),
+            "photo_url": claims.get("picture"),
+            "google_sub": claims.get("sub"),
+            "auth_provider": "google",
+            "role": "member",
+            "agent_mode": "95_PERCENT_AUTO",
+            "created_at": now,
+            "last_login_at": now,
+        }
+        try:
+            get_user_ref(user_id).set(user)
+        except DuplicateKeyError as error:
+            raise ValueError("An account with this email already exists. Sign in with that account.") from error
+    return _issue_session(user)
+
+
+async def get_current_user(authorization: str | None = Header(default=None)) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="A Verdant bearer token is required.")
+    token = authorization.removeprefix("Bearer ").strip()
+    try:
+        claims = jwt.decode(
+            token,
+            _jwt_secret(),
+            algorithms=["HS256"],
+            issuer="verdant-api",
+            options={"require": ["exp", "iat", "sub", "iss"]},
+        )
+    except jwt.ExpiredSignatureError as error:
+        raise HTTPException(status_code=401, detail="Your session has expired. Sign in again.") from error
+    except jwt.InvalidTokenError as error:
+        raise HTTPException(status_code=401, detail="Your session is invalid. Sign in again.") from error
+
+    user = db.users.find_one({"_id": claims["sub"]})
+    if not user:
+        raise HTTPException(status_code=401, detail="This account is no longer available.")
+    return _public_user(user)

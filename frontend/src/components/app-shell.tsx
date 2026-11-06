@@ -31,7 +31,7 @@ import {
 import { BrandMark, BrandName } from "@/components/brand";
 import { OtpBanner } from "@/components/otp-banner";
 import { useTheme } from "@/lib/theme";
-import { auth, logoutFirebaseUser, onAuthStateChanged } from "@/lib/firebase";
+import { getAuthToken, logoutUser, onSessionChange } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -78,10 +78,8 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
   useEffect(() => {
-    const authClient = auth;
-    if (!authClient) return;
     let active = true;
-    const refresh = async () => {
+    const refreshWorkspace = async () => {
       setRefreshing(true);
       try {
         const [currentQuota, queue] = await Promise.all([
@@ -99,28 +97,47 @@ export function AppShell({ children }: { children: ReactNode }) {
         if (active) setRefreshing(false);
       }
     };
-    const unsubscribe = onAuthStateChanged(authClient, (current) => {
-      setUser(current ? { name: current.displayName ?? "", email: current.email ?? "" } : null);
-      if (current) void refresh();
-      else {
+
+    const refreshSession = async () => {
+      await Promise.resolve();
+      if (!getAuthToken()) {
+        if (!active) return;
+        setUser(null);
         setQueueCount(0);
         setQuota({ applied_today: 0, daily_apply_limit: 10 });
         setApiError(null);
+        return;
       }
-    });
+      try {
+        const session = await apiRequest<{
+          user: { full_name: string; email: string };
+        }>("/api/auth/me");
+        if (!active) return;
+        setUser({ name: session.user.full_name, email: session.user.email });
+        await refreshWorkspace();
+      } catch {
+        if (!active) return;
+        logoutUser();
+        setUser(null);
+        router.replace("/auth");
+      }
+    };
+
+    const unsubscribe = onSessionChange(() => void refreshSession());
+    void refreshSession();
     const timer = window.setInterval(() => {
-      if (authClient.currentUser) void refresh();
+      if (getAuthToken()) void refreshWorkspace();
     }, 15000);
     return () => {
       active = false;
       unsubscribe();
       window.clearInterval(timer);
     };
-  }, [retryCount]);
+  }, [retryCount, router]);
   const display = user?.name || user?.email?.split("@")[0] || "You";
 
   async function signOut() {
-    await logoutFirebaseUser();
+    logoutUser();
     router.replace("/auth");
   }
 

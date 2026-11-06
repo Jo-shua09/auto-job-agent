@@ -5,7 +5,9 @@ import { useRouter } from "next/navigation";
 import Image from "next/image";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { auth, getFirebaseErrorMessage, loginWithFirebaseEmail, loginWithFirebaseGoogle, onAuthStateChanged, registerWithFirebaseEmail } from "@/lib/firebase";
+import { GoogleLogin, GoogleOAuthProvider } from "@react-oauth/google";
+import { apiRequest } from "@/lib/api";
+import { getAuthToken, loginWithEmail, loginWithGoogle, logoutUser, registerWithEmail } from "@/lib/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -22,6 +24,35 @@ function StepShowcase() {
   );
 }
 
+function GoogleSignInButton({ disabled, onSuccess }: { disabled: boolean; onSuccess: (credential: string) => void }) {
+  const clientId = process.env.NEXT_PUBLIC_GOOGLE_CLIENT_ID;
+  if (!clientId) {
+    return (
+      <Button variant="outline" size="lg" className="w-full bg-card" disabled>
+        Google sign-in is not configured
+      </Button>
+    );
+  }
+
+  return (
+    <GoogleOAuthProvider clientId={clientId}>
+      <div className={`flex justify-center [&>div]:max-w-full ${disabled ? "pointer-events-none opacity-60" : ""}`}>
+        <GoogleLogin
+          width="360"
+          theme="outline"
+          size="large"
+          shape="rectangular"
+          onSuccess={(response) => {
+            if (response.credential) onSuccess(response.credential);
+            else toast.error("Google did not return a sign-in credential. Please try again.");
+          }}
+          onError={() => toast.error("We couldn't sign you in with Google. Please try again.")}
+        />
+      </div>
+    </GoogleOAuthProvider>
+  );
+}
+
 export default function AuthPage() {
   const router = useRouter();
   const [mode, setMode] = useState<"signin" | "signup" | "forgot">("signin");
@@ -31,21 +62,29 @@ export default function AuthPage() {
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
   const [checkingSession, setCheckingSession] = useState(true);
-  const [configurationError, setConfigurationError] = useState(false);
   const [sent, setSent] = useState<string | null>(null);
 
   useEffect(() => {
-    if (!auth) {
+    let active = true;
+    if (!getAuthToken()) {
       const timer = window.setTimeout(() => {
-        setConfigurationError(true);
-        setCheckingSession(false);
+        if (active) setCheckingSession(false);
       }, 0);
-      return () => window.clearTimeout(timer);
+      return () => {
+        active = false;
+        window.clearTimeout(timer);
+      };
     }
-    return onAuthStateChanged(auth, (user) => {
-      if (user) router.replace("/agent");
-      else setCheckingSession(false);
-    });
+
+    void apiRequest("/api/auth/me")
+      .then(() => router.replace("/agent"))
+      .catch(() => {
+        logoutUser();
+        if (active) setCheckingSession(false);
+      });
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   async function submit(e: React.FormEvent) {
@@ -53,28 +92,28 @@ export default function AuthPage() {
     setBusy(true);
     try {
       if (mode === "signin") {
-        await loginWithFirebaseEmail(email, password);
+        await loginWithEmail(email, password);
         router.replace("/agent");
       } else if (mode === "signup") {
-        await registerWithFirebaseEmail(name, email, password);
+        await registerWithEmail(name, email, password);
         router.replace("/agent");
       } else {
         setSent("Email recovery is not connected. Return to sign in to continue.");
       }
     } catch (err) {
-      toast.error(getFirebaseErrorMessage(err, "We couldn't sign you in. Please try again."));
+      toast.error(err instanceof Error ? err.message : "We couldn't sign you in. Please try again.");
     } finally {
       setBusy(false);
     }
   }
 
-  async function oauth() {
+  async function oauth(credential: string) {
     setBusy(true);
     try {
-      await loginWithFirebaseGoogle();
+      await loginWithGoogle(credential);
       router.replace("/agent");
     } catch (err) {
-      toast.error(getFirebaseErrorMessage(err, "We couldn't sign you in with Google. Please try again."));
+      toast.error(err instanceof Error ? err.message : "We couldn't sign you in with Google. Please try again.");
     } finally {
       setBusy(false);
     }
@@ -135,12 +174,6 @@ export default function AuthPage() {
                   : "Sign in to pick up where your job search left off."}
             </p>
           </div>
-
-          {configurationError && (
-            <p role="alert" className="mt-5 rounded-xl border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
-              Sign-in is temporarily unavailable. Please try again later.
-            </p>
-          )}
 
           {mode !== "forgot" && (
             <div className="mt-7 grid grid-cols-2 rounded-xl border border-border/70 bg-muted/70 p-1">
@@ -210,7 +243,7 @@ export default function AuthPage() {
                       id="pw"
                       type={showPassword ? "text" : "password"}
                       required
-                      minLength={6}
+                      minLength={8}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className="h-12 rounded-xl px-4 pr-12"
@@ -255,15 +288,7 @@ export default function AuthPage() {
                 <span className="h-px flex-1 bg-border" /> or <span className="h-px flex-1 bg-border" />
               </div>
               <div>
-                <Button variant="outline" size="lg" className="w-full bg-card" onClick={oauth} disabled={busy}>
-                  <svg viewBox="0 0 24 24" className="size-4" aria-hidden>
-                    <path
-                      fill="currentColor"
-                      d="M21.6 12.23c0-.68-.06-1.36-.18-2.02H12v3.82h5.4a4.6 4.6 0 0 1-2 3.03v2.5h3.24c1.9-1.75 2.96-4.32 2.96-7.33ZM12 22c2.7 0 4.97-.9 6.63-2.43l-3.24-2.5c-.9.6-2.04.96-3.39.96-2.6 0-4.81-1.76-5.6-4.12H3.07v2.58A10 10 0 0 0 12 22Zm-5.6-8.09a6 6 0 0 1 0-3.82V7.5H3.07a10 10 0 0 0 0 9l3.33-2.59ZM12 5.96c1.47 0 2.79.5 3.83 1.5l2.87-2.87A9.6 9.6 0 0 0 12 2a10 10 0 0 0-8.93 5.5l3.33 2.59C7.19 7.72 9.4 5.96 12 5.96Z"
-                    />
-                  </svg>
-                  Continue with Google
-                </Button>
+                <GoogleSignInButton disabled={busy} onSuccess={(credential) => void oauth(credential)} />
               </div>
             </>
           )}

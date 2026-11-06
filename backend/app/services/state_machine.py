@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from app.models.schemas import JobStatus
-from app.core.firebase import get_user_ref
+from app.core.database import get_user_ref
 
 ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     JobStatus.DISCOVERED: {

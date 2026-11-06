@@ -1,48 +1,45 @@
 # Verdant backend
 
-The backend is a FastAPI service for Verdant, an AI-assisted job-search workspace. It verifies Firebase user sessions, stores user-scoped data in Firestore, discovers and scores jobs, prepares tailored application materials, tracks application state, and exposes the API used by the frontend.
+The FastAPI backend powers Verdant's authenticated workspace and application workflows. It stores users and user-scoped records in MongoDB, verifies email/password credentials and Google ID tokens, and issues signed Verdant bearer tokens.
 
 ## Responsibilities
 
-- Verify Firebase ID tokens and establish per-user API sessions.
-- Store and retrieve a career Vault and Scout preferences in Firestore.
-- Parse uploaded CVs, produce tailored documents, and compile PDFs.
-- Discover jobs using configured search providers, score matches, and stage jobs for review.
-- Track approval, application execution, one-time verification requests, and inbox events.
-- Enforce workflow transitions through the job state machine.
+- Register and authenticate email/password and Google accounts.
+- Store a career Vault, search preferences, jobs, tailored packages, application logs, inbox events, and activity in MongoDB.
+- Parse uploaded CVs, discover and score roles, prepare tailored materials, and compile PDFs.
+- Track review, application, verification-code, and inbox workflows.
+- Enforce tenant isolation on every user-owned document operation.
+
+New accounts start with blank workspaces. There is no Firebase authentication, Firestore access, or legacy Firebase data import.
 
 ## Source map
 
 ```text
 backend/
 ├── app/
-│   ├── main.py                 FastAPI setup, CORS, static PDF mount, and API routes
+│   ├── main.py                  FastAPI setup, CORS, auth and application routes
 │   ├── core/
-│   │   ├── config.py           Reserved for centralized runtime configuration
-│   │   └── firebase.py         Firebase Admin, Firestore, Storage, tenant context
+│   │   └── database.py          MongoDB client, indexes, and owner-scoped collection adapter
 │   ├── models/
-│   │   └── schemas.py          Pydantic profile, job, and tailored-package schemas
-│   ├── routers/                Route-module location; current route handlers are in main.py
+│   │   └── schemas.py           Pydantic Vault, job, and tailored-package schemas
 │   └── services/
-│       ├── auth_service.py       Firebase token and authentication helpers
-│       ├── profile_service.py    Vault, profile, preference, and CV parsing logic
-│       ├── scout_service.py      Job discovery, scoring, and activity stream
+│       ├── auth_service.py       Password hashing, Google verification, and signed sessions
+│       ├── profile_service.py    Vault, preferences, quotas, and CV parsing
+│       ├── scout_service.py      Job discovery, scoring, and activity
 │       ├── tailor_service.py     Tailored package creation and retrieval
 │       ├── pdf_compiler.py       Tailored CV PDF generation
-│       ├── applicator_service.py Application execution and execution logs
-│       ├── state_machine.py     Job state transitions
-│       └── inbox_service.py     Inbox polling and email event processing
-├── credentials/                 Optional local Firebase service-account file (ignored by Git)
-├── generated_pdfs/              Runtime-generated application PDFs
-├── requirements.txt             Python dependencies
-└── .gitignore                   Excludes local environment, credentials, and generated files
+│       ├── applicator_service.py Application workflow and execution logs
+│       ├── state_machine.py      Job state transitions
+│       └── inbox_service.py      Inbox polling and email-event processing
+├── generated_pdfs/               Runtime-generated PDFs (ephemeral on Render)
+└── requirements.txt
 ```
 
-## Requirements and local setup
+The Mongo adapter stores each user's records in shared MongoDB collections with an enforced `user_id` owner filter. Document identifiers are namespaced per user so identical IDs in different accounts cannot collide.
 
-Use Python with `pip`. Firebase access is required to start the API because Firestore is initialized when the application loads.
+## Local setup
 
-From this directory:
+Use Python and pip. From this directory:
 
 ```powershell
 python -m venv .venv
@@ -50,77 +47,98 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-Create a local `.env` in `backend/` and supply the variables described below. For local Firebase Admin access, either:
+Create `backend/.env` with:
 
-1. Put a Firebase service-account JSON file at `credentials/serviceAccountKey.json` (the default path), or set `FIREBASE_CREDENTIALS_PATH` to its path; or
-2. Set `FIREBASE_SERVICE_ACCOUNT_JSON` to the full service-account JSON object as a single environment-variable value.
+```dotenv
+MONGODB_URI=mongodb+srv://<database-user>:<url-encoded-password>@<cluster-host>/verdant?retryWrites=true&w=majority
+MONGODB_DATABASE=verdant
+AUTH_JWT_SECRET=<random-secret-at-least-32-characters>
+GOOGLE_CLIENT_ID=<Google-OAuth-web-client-id>
+FRONTEND_ORIGINS=http://localhost:3000
+```
 
-Alternatively, on a machine configured with Google Cloud Application Default Credentials, Firebase Admin can use ADC when neither credential source is provided.
-
-Run the API from `backend/`:
+Start the service from `backend/`:
 
 ```powershell
 python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
-The API health check is `/health`, and FastAPI's interactive docs are at `/docs` (for example, `http://localhost:8000/docs`).
+`/health` performs a MongoDB ping; `/docs` provides the interactive API reference. Authentication routes are `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/google`, and `GET /api/auth/me`.
 
 ## Environment variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `FIREBASE_PROJECT_ID` | Yes | Firebase project ID used by Firebase Admin. If omitted while using service-account JSON, the project ID is read from that JSON. |
-| `FIREBASE_STORAGE_BUCKET` | Recommended | Firebase Storage bucket for generated or uploaded assets. |
-| `FIREBASE_CREDENTIALS_PATH` | One credential method required | Path to a service-account JSON file. Defaults to `./credentials/serviceAccountKey.json`. |
-| `FIREBASE_SERVICE_ACCOUNT_JSON` | One credential method required | Full Firebase service-account JSON content, intended for a secret environment variable on hosts such as Render. |
-| `FIREBASE_WEB_API_KEY` | Optional | Firebase Authentication REST API key for backend email/password helper flows. The browser sign-in uses the separate frontend Firebase web configuration. |
-| `FRONTEND_ORIGINS` | Recommended | Comma-separated exact frontend origins allowed by CORS. Localhost development origins are defaults. |
-| `GEMINI_API_KEY` | Required for AI workflows | Enables CV parsing, job discovery/scoring, tailoring, and supported application automation. |
-| `SERPER_API_KEY` | Optional | Enables Serper-backed job search in Scout. |
-| `JSEARCH_API_KEY` | Optional | Enables JSearch-backed job search in Scout. |
+| `MONGODB_URI` | Yes | MongoDB Atlas connection URI or a local MongoDB URI. URL-encode special characters in the database user's password. |
+| `MONGODB_DATABASE` | Recommended | Database name; defaults to `verdant`. |
+| `AUTH_JWT_SECRET` | Yes | Random signing secret with at least 32 characters. Keep it private and stable across deployments so existing sessions remain valid. |
+| `GOOGLE_CLIENT_ID` | Required for Google sign-in | OAuth 2.0 web application client ID. The backend verifies the ID-token audience against this value. |
+| `FRONTEND_ORIGINS` | Yes in production | Comma-separated exact browser origins allowed by CORS, without trailing slashes. |
+| `GEMINI_API_KEY` | For AI workflows | Enables CV parsing, job discovery/scoring, tailoring, and supported automation. |
+| `SERPER_API_KEY` | Optional | Enables Serper-backed job search. |
+| `JSEARCH_API_KEY` | Optional | Enables JSearch-backed job search. |
 | `GMAIL_ADDRESS` | Optional | Gmail account used for live inbox polling. |
-| `GMAIL_APP_PASSWORD` | Optional | Gmail app password used with the optional IMAP integration. |
+| `GMAIL_APP_PASSWORD` | Optional | Gmail app password for the optional IMAP integration. |
 
-Do not commit `.env`, service-account files, API keys, app passwords, ID tokens, or real user/job data. The backend `.gitignore` excludes local `.env`, `credentials/`, virtual environments, and generated PDFs.
+Never commit `.env`, MongoDB URIs, JWT secrets, provider keys, Gmail app passwords, tokens, CVs, or generated personal documents.
 
-## API overview
+## Configure MongoDB Atlas
 
-The API routes are currently registered in `app/main.py`:
+1. Create an Atlas project and cluster.
+2. Under **Database Access**, create a dedicated database user and grant read/write access to the `verdant` database. Do not use the Atlas account-owner password as the application credential.
+3. Under **Network Access**, allow the Render service to connect. Prefer a fixed outbound IP allowlist if your Render plan provides one. If it does not, Atlas may require a broader allowlist; use a strong unique database password and restrict the database user's role to this app database.
+4. Choose **Connect → Drivers**, copy the URI, replace the placeholders, and URL-encode any reserved characters in the password.
+5. Add the URI and database name to Render as secret environment variables. Do not include the URI in `NEXT_PUBLIC_*` variables.
 
-| Route group | Purpose |
-| --- | --- |
-| `/health` | Service health check. |
-| `/api/auth/*` | Establish and inspect authenticated sessions. |
-| `/api/vault/*` | Read/update/reset the profile Vault and upload or test CV processing. |
-| `/api/scout/*` | Manage search preferences, quota, and Scout runs. |
-| `/api/jobs/*` | List jobs and history; approve, skip, or submit verification codes. |
-| `/api/agent/*` | Read the agent activity stream. |
-| `/api/tailor/*` | Create, retrieve, batch, and edit tailored packages. |
-| `/api/apply/*` | Execute applications, run queued applications, and retrieve logs. |
-| `/api/inbox/*` | Poll the inbox, simulate an email event, and list recorded events. |
-| `/pdfs/*` | Serve generated PDFs. |
+Atlas creates the database and collections when the application first writes data. The backend creates its unique user-email index on first authentication.
 
-Most user-data routes require a Firebase-authenticated bearer token. See `/docs` for request and response schemas.
+## Google sign-in setup
+
+Create an OAuth 2.0 **Web application** client in Google Cloud Console. Add these authorized JavaScript origins:
+
+- `http://localhost:3000` for local development
+- `https://verdant-agent.vercel.app` for the deployed frontend
+
+Use the same client ID for backend `GOOGLE_CLIENT_ID` and frontend `NEXT_PUBLIC_GOOGLE_CLIENT_ID`. No service-account key or Firebase project is needed for login.
 
 ## Deploy to Render
 
-Create a web service with `backend/` as its root directory. Install dependencies with:
+Configure the Render web service with:
+
+- **Root directory:** `backend`
+- **Build command:** `pip install -r requirements.txt`
+- **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+- **Health check path:** `/health`
+
+Add these environment variables in Render:
 
 ```text
-pip install -r requirements.txt
+MONGODB_URI=<Atlas connection URI>
+MONGODB_DATABASE=verdant
+AUTH_JWT_SECRET=<random secret, at least 32 characters>
+GOOGLE_CLIENT_ID=<Google OAuth web client ID>
+FRONTEND_ORIGINS=https://verdant-agent.vercel.app
 ```
 
-Use this start command:
+Add optional AI/search/Gmail credentials only for features you intend to use. A healthy `/health` response includes `"mongodb_connected": true`; if it fails, verify the URI, Atlas network access, and database user's privileges.
 
-```text
-uvicorn app.main:app --host 0.0.0.0 --port $PORT
-```
+## API route groups
 
-In the Render service's environment settings, add the required Firebase project/bucket configuration and a Firebase Admin service-account credential. For Render, the supported `FIREBASE_SERVICE_ACCOUNT_JSON` variable can hold the full service-account JSON value; alternatively, use Render's secret-file feature and point `FIREBASE_CREDENTIALS_PATH` at that file. Do not paste credentials into source code, README files, build logs, or frontend environment variables. Add `GEMINI_API_KEY` and any optional provider/inbox credentials required by the features you enable. Set `FRONTEND_ORIGINS` to the deployed frontend origin, without a trailing slash.
+Routes are currently registered in `app/main.py`:
 
-If the service exits during startup with a Google `DefaultCredentialsError`, it does not have credentials available to Firebase Admin. Configure the service-account JSON or secret file and redeploy. The app creates its Firestore client at startup, so a valid credential source must be available before Uvicorn imports `app.main`.
+| Route group | Purpose |
+| --- | --- |
+| `/health` | MongoDB-backed health check. |
+| `/api/auth/*` | Email/password, Google, and current-session endpoints. |
+| `/api/vault/*` | Profile Vault, reset, and CV handling. |
+| `/api/scout/*` | Search preferences, quotas, and Scout runs. |
+| `/api/jobs/*` | Job lists, history, approvals, and verification codes. |
+| `/api/agent/*` | Agent activity. |
+| `/api/tailor/*` | Tailored application packages. |
+| `/api/apply/*` | Application execution and logs. |
+| `/api/inbox/*` | Inbox polling and email events. |
+| `/pdfs/*` | Generated PDF files. |
 
-## Related documentation
+Password recovery email delivery is not implemented. Generated PDFs use local storage, which is not persistent across Render instances/restarts; use object storage if durable PDF delivery is required.
 
-- [Project overview and shared setup](../README.md)
-- [Next.js frontend setup and deployment](../frontend/README.md)
+See the [project overview](../README.md) and [frontend guide](../frontend/README.md).

@@ -1,21 +1,21 @@
 # Verdant frontend
 
-The frontend is the browser-based workspace for Verdant, an AI-assisted job-search application. It is built with Next.js App Router, React, TypeScript, Tailwind CSS, and Firebase Authentication. It communicates with the FastAPI backend for profile, job-search, tailoring, application, and activity data.
+The frontend is the browser workspace for Verdant, an AI-assisted job-search application. It uses Next.js App Router, React, TypeScript, Tailwind CSS, Google Identity Services for Google sign-in, and a Verdant-issued bearer token for authenticated API requests.
 
 ## Features and pages
 
 | Route | Purpose |
 | --- | --- |
 | `/` | Redirects to the agent workspace. |
-| `/auth` | Sign in or create an account with Firebase Authentication. |
-| `/reset-password` | Password recovery entry point. |
+| `/auth` | Create an account or sign in with email/password or Google. |
+| `/reset-password` | Placeholder route; email password recovery is not available yet. |
 | `/agent` | Configure and run Scout, paste a job, and view jobs and activity. |
 | `/queue` | Review tailored packages and approve applications. |
 | `/history` | Browse application history. |
-| `/vault` | Manage verified experience, projects, education, skills, and CV data. |
-| `/settings` | Configure search preferences, limits, and appearance. |
+| `/vault` | Manage experience, projects, education, skills, and CV data. |
+| `/settings` | Configure job-search preferences, limits, and appearance. |
 
-Workspace routes are protected by the authenticated app layout. Page metadata is defined in route layouts; private app and authentication routes are marked not to be indexed. The Verdant mark, logo, and favicon are sourced from the project assets.
+Private workspace routes are protected by a backend-verified session. The Verdant logo, favicon, page metadata, and SEO configuration are maintained in the frontend.
 
 ## Source map
 
@@ -25,55 +25,57 @@ frontend/
 ├── public/                 Static assets exposed from /
 ├── src/
 │   ├── app/
-│   │   ├── (app)/          Authenticated workspace routes and shared layout
-│   │   ├── auth/            Sign-in and registration
-│   │   ├── reset-password/  Password recovery route
+│   │   ├── (app)/          Authenticated workspace pages and shared layout
+│   │   ├── auth/            Sign-in and registration page
+│   │   ├── reset-password/  Password recovery placeholder
 │   │   ├── layout.tsx       Root layout and global metadata
-│   │   ├── globals.css      Global styles and design tokens
-│   │   └── icon.jpg         App favicon
-│   ├── components/
-│   │   ├── ui/              Shared UI primitives
-│   │   ├── queue/           Queue-specific UI
-│   │   └── ...              App shell, brand, route guard, notifications
+│   │   └── globals.css      Global styles and design tokens
+│   ├── components/         App shell, route guard, and UI components
 │   ├── hooks/               Reusable React hooks
-│   └── lib/                 API client, Firebase, SEO metadata, theme, utilities
-├── package.json             Scripts and dependencies
-└── pnpm-lock.yaml           Reproducible pnpm dependency versions
+│   └── lib/
+│       ├── api.ts           API requests and error handling
+│       ├── auth.ts          Token storage, auth calls, and session events
+│       ├── theme.ts         Theme state
+│       └── ...              Other shared utilities
+├── package.json
+└── pnpm-lock.yaml
 ```
 
-## Requirements
+## Requirements and local setup
 
-- Node.js compatible with the installed Next.js version.
+- Node.js compatible with the project's Next.js release.
 - pnpm 10.x (the package declares `pnpm@10.14.0`).
-- A Firebase project with Authentication enabled.
-- A running Verdant API for authenticated workspace features.
+- A running Verdant backend and MongoDB database.
+- A Google OAuth web client ID if Google sign-in is required.
 
-## Local setup
+Create `frontend/.env.local`:
 
-From this directory:
+```dotenv
+NEXT_PUBLIC_API_URL=http://localhost:8000
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=<Google-OAuth-web-client-id>
+NEXT_PUBLIC_SITE_URL=http://localhost:3000
+```
+
+Then run from this directory:
 
 ```powershell
 pnpm install
 pnpm dev
 ```
 
-Before starting the app, create `.env.local` with the variables below. Start the API separately from `../backend`; see [the backend guide](../backend/README.md). Visit [http://localhost:3000](http://localhost:3000).
+Open [http://localhost:3000](http://localhost:3000). The OAuth client must list `http://localhost:3000` as an authorized JavaScript origin. See [the backend guide](../backend/README.md) for Atlas and API setup.
 
-### Environment variables
+## Environment variables
 
 | Variable | Required | Description |
 | --- | --- | --- |
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | Yes | Firebase web app API key. |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | Yes | Firebase Authentication domain. |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | Yes | Firebase project ID. |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | Yes | Firebase web app ID. |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | Optional | Firebase Storage bucket if the web app needs it. |
-| `NEXT_PUBLIC_API_URL` | Yes for workspace use | Absolute base URL of the FastAPI service; defaults to `http://localhost:8000` for local work. |
-| `NEXT_PUBLIC_SITE_URL` | Recommended in production | Public site origin used to construct canonical and social-sharing metadata URLs. |
+| `NEXT_PUBLIC_API_URL` | Yes for workspace use | Absolute base URL of the FastAPI service; defaults to `http://localhost:8000` locally. |
+| `NEXT_PUBLIC_GOOGLE_CLIENT_ID` | Required for Google sign-in | Public OAuth web client ID. This is not a private secret. It must match backend `GOOGLE_CLIENT_ID`. |
+| `NEXT_PUBLIC_SITE_URL` | Recommended in production | Public site origin used for canonical and social-sharing metadata URLs. |
 
-Firebase web configuration is used in the browser and is not a substitute for Firebase Admin service-account credentials. Do not put backend secrets, service-account JSON, Gemini keys, Serper keys, or Gmail credentials in this file or in any `NEXT_PUBLIC_` variable. Restrict the Firebase web API key to the appropriate APIs and domains in Google Cloud.
+Do not add `MONGODB_URI`, `AUTH_JWT_SECRET`, Gemini/Search provider keys, database passwords, or other backend credentials to frontend environment variables. Anything prefixed `NEXT_PUBLIC_` is included in client-side code.
 
-### Scripts
+## Scripts
 
 ```bash
 pnpm dev        # Start Next.js in development mode
@@ -84,13 +86,18 @@ pnpm lint       # Run ESLint
 pnpm test       # Run Vitest
 ```
 
-## API connection and deployment
+## Deploy to Vercel
 
-The client sends Firebase-authenticated requests to `NEXT_PUBLIC_API_URL`. For local development, the API normally listens on port 8000. For Vercel, set the project root to `frontend/`, configure the Firebase web variables, set `NEXT_PUBLIC_API_URL` to the deployed API origin, and set `NEXT_PUBLIC_SITE_URL` to the public frontend origin. Add the frontend origin to the backend's `FRONTEND_ORIGINS` allowlist. Redeploy after changing build-time `NEXT_PUBLIC_*` values.
+Set the Vercel project root to `frontend/`, then configure:
 
-An unconfigured Firebase client does not prevent static prerendering, but sign-in is unavailable until the required Firebase web configuration is added.
+```text
+NEXT_PUBLIC_API_URL=<Render API origin>
+NEXT_PUBLIC_GOOGLE_CLIENT_ID=<Google OAuth web client ID>
+NEXT_PUBLIC_SITE_URL=https://verdant-agent.vercel.app
+```
 
-## Related documentation
+In the backend's Render environment, set `FRONTEND_ORIGINS=https://verdant-agent.vercel.app`. Add the Vercel origin to the Google OAuth client as an authorized JavaScript origin. Redeploy Vercel after changing any `NEXT_PUBLIC_*` variable.
 
-- [Project overview and shared setup](../README.md)
-- [FastAPI backend configuration and deployment](../backend/README.md)
+The browser stores the Verdant JWT in local storage and sends it as a bearer token to the API. Sign-out removes the local session; tokens expire after seven days. The backend does not provide password-reset email delivery yet, so the existing reset-password route is informational rather than a working recovery flow.
+
+See the [project overview](../README.md) and [backend guide](../backend/README.md).

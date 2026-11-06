@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from google import genai
 from google.genai import types
 
-from app.core.firebase import get_user_ref
+from app.core.database import get_user_ref
 from app.models.schemas import JobStatus
 from app.services.profile_service import clean_no_em_dash
 from app.services.scout_service import log_agent_step

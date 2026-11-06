@@ -3,21 +3,34 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { LoaderCircle } from "lucide-react";
-import { auth, onAuthStateChanged } from "@/lib/firebase";
+import { apiRequest } from "@/lib/api";
+import { getAuthToken, logoutUser } from "@/lib/auth";
 
 export function ProtectedRoute({ children }: { children: ReactNode }) {
   const router = useRouter();
   const [authenticated, setAuthenticated] = useState(false);
 
   useEffect(() => {
-    if (!auth) {
+    let active = true;
+    if (!getAuthToken()) {
       router.replace("/auth");
-      return;
+      return () => {
+        active = false;
+      };
     }
-    return onAuthStateChanged(auth, (user) => {
-      if (user) setAuthenticated(true);
-      else router.replace("/auth");
-    });
+
+    void apiRequest<{ authenticated: boolean }>("/api/auth/me")
+      .then(() => {
+        if (active) setAuthenticated(true);
+      })
+      .catch(() => {
+        logoutUser();
+        router.replace("/auth");
+      });
+
+    return () => {
+      active = false;
+    };
   }, [router]);
 
   if (!authenticated) {
