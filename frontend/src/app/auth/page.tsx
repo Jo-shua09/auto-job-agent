@@ -244,6 +244,11 @@ export default function AuthPage() {
                 <Input
                   id="email"
                   type="email"
+                  autoComplete="email"
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  inputMode="email"
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -269,6 +274,10 @@ export default function AuthPage() {
                     <Input
                       id="pw"
                       type={showPassword ? "text" : "password"}
+                      autoComplete={mode === "signin" ? "current-password" : "new-password"}
+                      autoCapitalize="none"
+                      autoCorrect="off"
+                      spellCheck={false}
                       required
                       minLength={8}
                       value={password}
