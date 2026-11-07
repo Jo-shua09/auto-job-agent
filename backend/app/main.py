@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import db, get_user_ref
-from app.models.schemas import MasterProfile, TailoredPackage, JobStatus
+from app.models.schemas import MasterProfile, ScoutPreferences, TailoredPackage, JobStatus
 from app.services.auth_service import (
     login_email_user,
     login_google_user,
@@ -193,7 +193,7 @@ def read_scout_preferences(current_user: dict = Depends(get_current_user)):
     return get_scout_preferences(current_user["user_id"])
 
 @app.put("/api/scout/preferences")
-def update_full_scout_preferences(prefs_payload: Dict, current_user: dict = Depends(get_current_user)):
+def update_full_scout_preferences(prefs_payload: ScoutPreferences, current_user: dict = Depends(get_current_user)):
     """Saves full Scout Preferences (target_roles, preferred_locations, work_modes, daily_apply_limit, etc.)."""
     uid = current_user["user_id"]
     try:
