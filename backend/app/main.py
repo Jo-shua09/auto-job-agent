@@ -72,14 +72,6 @@ frontend_origins = list(
     )
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=frontend_origins,
-    allow_credentials=False,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 app.mount("/pdfs", StaticFiles(directory=str(GENERATED_PDF_DIR)), name="pdfs")
 
 
@@ -599,3 +591,12 @@ def simulate_incoming_recruiter_email(
 @app.get("/api/inbox/events")
 def read_tracked_email_events(current_user: dict = Depends(get_current_user)):
     return list_email_events(user_id=current_user["user_id"])
+
+
+app = CORSMiddleware(
+    app=app,
+    allow_origins=frontend_origins,
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)

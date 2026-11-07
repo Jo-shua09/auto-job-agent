@@ -4,6 +4,7 @@ import sys
 import uuid
 import asyncio
 import hashlib
+from collections import defaultdict
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from datetime import datetime, timezone
 from typing import List, Optional
