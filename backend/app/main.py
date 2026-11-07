@@ -56,14 +56,21 @@ from app.services.state_machine import transition_job_state
 
 app = FastAPI(title="Verdant — Autonomous Job Agent API", version="1.0.0")
 
-frontend_origins = [
-    origin.strip()
-    for origin in os.getenv(
-        "FRONTEND_ORIGINS",
-        "http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001",
-    ).split(",")
-    if origin.strip()
-]
+default_frontend_origins = (
+    "https://verdant-agent.vercel.app",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+)
+configured_frontend_origins = os.getenv("FRONTEND_ORIGINS", "").split(",")
+frontend_origins = list(
+    dict.fromkeys(
+        origin.strip().rstrip("/")
+        for origin in (*default_frontend_origins, *configured_frontend_origins)
+        if origin.strip().rstrip("/")
+    )
+)
 
 app.add_middleware(
     CORSMiddleware,
