@@ -165,7 +165,7 @@ def read_vault(current_user: dict = Depends(get_current_user)):
     return get_master_profile(current_user["user_id"])
 
 @app.put("/api/vault")
-def update_vault(profile_payload: Dict, current_user: dict = Depends(get_current_user)):
+def update_vault(profile_payload: MasterProfile, current_user: dict = Depends(get_current_user)):
     """Saves manually entered Master Profile fields (Personal info, Experiences, Projects, Education, Skills)."""
     uid = current_user["user_id"]
     try:
