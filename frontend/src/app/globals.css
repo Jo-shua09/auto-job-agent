@@ -192,6 +192,7 @@
     border-color: var(--color-border);
   }
   html {
+    font-size: clamp(15px, calc(14px + 0.25vw), 16px);
     -webkit-tap-highlight-color: transparent;
   }
   body {

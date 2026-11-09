@@ -12,7 +12,7 @@ export function BrandMark({ className }: { className?: string }) {
 
 export function BrandName({ className }: { className?: string }) {
   return (
-    <span className={cn("ui-title truncate text-[17px]", className)}>
+    <span className={cn("ui-title truncate text-[1.0625rem]", className)}>
       Verdant
     </span>
   );

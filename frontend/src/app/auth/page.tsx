@@ -18,7 +18,7 @@ import brandLogo from "../../../assets/logo.png";
 function StepShowcase() {
   return (
     <div className="w-full max-w-md rounded-3xl border border-border/70 bg-card/70 p-5 shadow-soft backdrop-blur-xl">
-      <p className="mb-2 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">Your workspace starts blank</p>
+      <p className="mb-2 font-mono text-[0.6875rem] tracking-[0.18em] text-mint uppercase">Your workspace starts blank</p>
       <p className="text-sm leading-6 text-muted-foreground">Add your own verified experience and search preferences. Live progress and tailored jobs appear only after you start the agent.</p>
     </div>
   );
@@ -166,7 +166,7 @@ export default function AuthPage() {
         </div>
         <div className="relative z-10 mx-auto w-full max-w-xl space-y-8">
           <div className="space-y-4">
-            <p className="font-mono text-[11px] font-medium tracking-[0.2em] text-mint uppercase">
+            <p className="font-mono text-[0.6875rem] font-medium tracking-[0.2em] text-mint uppercase">
               Your search, on autopilot
             </p>
             <h2 className="font-display max-w-xl text-5xl leading-[1.04] xl:text-6xl">
@@ -187,7 +187,7 @@ export default function AuthPage() {
             <BrandName />
           </div>
           <div className="space-y-2">
-            <p className="font-mono text-[11px] font-medium tracking-[0.18em] text-mint uppercase">
+            <p className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-mint uppercase">
               {mode === "forgot" ? "Account recovery" : "Welcome to Verdant"}
             </p>
             <h1 className="font-display text-4xl leading-tight">

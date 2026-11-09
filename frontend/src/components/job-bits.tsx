@@ -26,7 +26,7 @@ export function Chip({
   return (
     <span
       className={cn(
-        "inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[11px] font-medium whitespace-nowrap",
+        "inline-flex shrink-0 items-center gap-1 rounded-full px-2.5 py-0.5 text-[0.6875rem] font-medium whitespace-nowrap",
         tone === "muted" && "border border-border bg-muted text-muted-foreground",
         tone === "mint" && "bg-accent text-accent-foreground",
         tone === "warning" && "bg-warning/15 text-warning",
@@ -42,7 +42,7 @@ export function Chip({
 
 export function MatchBadge({ value }: { value: number }) {
   return (
-    <span className="shrink-0 rounded-full bg-primary px-2.5 py-0.5 font-mono text-[11px] font-semibold text-primary-foreground">{value}% match</span>
+    <span className="shrink-0 rounded-full bg-primary px-2.5 py-0.5 font-mono text-[0.6875rem] font-semibold text-primary-foreground">{value}% match</span>
   );
 }
 

@@ -61,7 +61,7 @@ function QuotaRing({ size = 44, used = 0, limit = 10 }: { size?: number; used?: 
           strokeDashoffset={c * (1 - pct)}
         />
       </svg>
-      <span className="absolute inset-0 grid place-items-center font-mono text-[11px] font-semibold">{used}</span>
+      <span className="absolute inset-0 grid place-items-center font-mono text-[0.6875rem] font-semibold">{used}</span>
     </div>
   );
 }
@@ -209,7 +209,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 {to === "/queue" && queueCount > 0 && (
                   <span
                     className={cn(
-                      "rounded-full bg-accent font-mono text-[10px] text-accent-foreground",
+                      "rounded-full bg-accent font-mono text-[0.625rem] text-accent-foreground",
                       collapsed ? "absolute top-1 right-1 grid size-4 place-items-center" : "px-2 py-0.5",
                     )}
                   >
@@ -262,7 +262,7 @@ export function AppShell({ children }: { children: ReactNode }) {
       <header className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border/60 bg-background/80 px-4 py-3 backdrop-blur-xl md:hidden">
         <div className="flex min-w-0 items-center gap-2">
           <BrandMark className="size-8" />
-          <BrandName className="text-[15px]" />
+          <BrandName className="text-[0.9375rem]" />
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
           <QuotaRing size={36} used={quota.applied_today} limit={quota.daily_apply_limit} />
@@ -350,7 +350,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               >
                 <Icon className="size-4.5" />
               </span>
-              <span className={cn("truncate text-[10px] leading-none", active ? "font-medium text-foreground" : "text-muted-foreground")}>
+              <span className={cn("truncate text-[0.625rem] leading-none", active ? "font-medium text-foreground" : "text-muted-foreground")}>
                 {label}
               </span>
               {to === "/queue" && queueCount > 0 && !active && (
@@ -368,9 +368,9 @@ export function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow?: str
   return (
     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
-        {eyebrow && <p className="mb-1.5 font-mono text-[11px] tracking-[0.18em] text-mint uppercase">{eyebrow}</p>}
+        {eyebrow && <p className="mb-1.5 font-mono text-[0.6875rem] tracking-[0.18em] text-mint uppercase">{eyebrow}</p>}
         <h1 className="font-display text-4xl leading-[1.05] wrap-break-word sm:text-5xl">{title}</h1>
-        {subtitle && <p className="mt-2 max-w-xl text-[15px] leading-6 text-muted-foreground">{subtitle}</p>}
+        {subtitle && <p className="mt-2 max-w-xl text-[0.9375rem] leading-6 text-muted-foreground">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>

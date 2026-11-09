@@ -287,7 +287,7 @@ export default function AgentView() {
                   onClick={() => changeActivityFilter(filter)}
                   className={`inline-flex min-h-9 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activityFilter === filter ? "border-mint/50 bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}
                 >
-                  {label}<span className="font-mono text-[11px] opacity-70">{count}</span>
+                  {label}<span className="font-mono text-[0.6875rem] opacity-70">{count}</span>
                 </button>
               ))}
             </div>
@@ -338,7 +338,7 @@ export default function AgentView() {
                         </time>
                       </div>
                       {item.detail && <p className="mt-1.5 break-words text-sm leading-6 text-muted-foreground">{item.detail}</p>}
-                      <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium ${status.style}`}>{status.icon}{status.label}</span>
+                      <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[0.6875rem] font-medium ${status.style}`}>{status.icon}{status.label}</span>
                     </div>
                   </li>
                 );
