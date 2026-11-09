@@ -71,7 +71,7 @@ export function OtpBanner() {
             </div>
           </div>
           <form className="flex flex-col gap-3 sm:flex-row sm:items-center" onSubmit={(event) => void submit(event)}>
-            <InputOTP maxLength={6} value={code} onChange={setCode}>
+            <InputOTP aria-label={`Security code for ${job.company_name}`} maxLength={6} value={code} onChange={setCode}>
               <InputOTPGroup className="font-mono">
                 {Array.from({ length: 6 }).map((_, index) => (
                   <InputOTPSlot key={index} index={index} className="size-10 bg-background" />

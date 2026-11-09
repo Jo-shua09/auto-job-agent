@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent, type KeyboardEvent } from "react";
-import { ArrowRight, MapPin, Plus, Radar } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type KeyboardEvent } from "react";
+import { Activity as ActivityIcon, ArrowRight, Check, CircleAlert, Clock3, Loader2, MapPin, Plus, Radar, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +26,26 @@ type ProfileStatus = { is_onboarded: boolean };
 type Quota = { daily_apply_limit: number; applied_today: number; remaining_today: number };
 type Activity = { id: string; title: string; detail?: string; status: string; timestamp: string };
 type Job = { id: string; company_name: string; role_title: string; location_type: string; match_score: number; status: string; external_url: string };
+type ActivityFilter = "all" | "active" | "completed" | "attention";
+
+const ACTIVITY_PAGE_SIZE = 8;
+
+function activityCategory(status: string): Exclude<ActivityFilter, "all"> {
+  if (status === "active") return "active";
+  if (status === "waiting_input" || status === "error") return "attention";
+  return "completed";
+}
+
+function formatActivityTime(timestamp: string) {
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) return "Time unavailable";
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date);
+}
 
 const EMPTY_PREFS: Preferences = {
   user_id: "",
@@ -72,12 +92,15 @@ export default function AgentView() {
   const [saving, setSaving] = useState(false);
   const [preferencesSaved, setPreferencesSaved] = useState(false);
   const [running, setRunning] = useState(false);
+  const [activityFilter, setActivityFilter] = useState<ActivityFilter>("all");
+  const [activitySearch, setActivitySearch] = useState("");
+  const [visibleActivityCount, setVisibleActivityCount] = useState(ACTIVITY_PAGE_SIZE);
   const [roleDraft, setRoleDraft] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [pasteMode, setPasteMode] = useState<"url" | "description">("url");
 
   const loadActivity = useCallback(() => Promise.all([
-      apiRequest<Activity[]>("/api/agent/activity-stream"),
+      apiRequest<Activity[]>("/api/agent/activity-stream?limit=100"),
       apiRequest<Job[]>("/api/jobs"),
   ]), []);
 
@@ -122,6 +145,33 @@ export default function AgentView() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [refresh, running]);
+
+  const activityCounts = useMemo(() => ({
+    all: activities.length,
+    active: activities.filter((item) => activityCategory(item.status) === "active").length,
+    completed: activities.filter((item) => activityCategory(item.status) === "completed").length,
+    attention: activities.filter((item) => activityCategory(item.status) === "attention").length,
+  }), [activities]);
+
+  const filteredActivities = useMemo(() => {
+    const query = activitySearch.trim().toLocaleLowerCase();
+    return activities.filter((item) => {
+      if (activityFilter !== "all" && activityCategory(item.status) !== activityFilter) return false;
+      return !query || `${item.title} ${item.detail ?? ""}`.toLocaleLowerCase().includes(query);
+    });
+  }, [activities, activityFilter, activitySearch]);
+
+  const visibleActivities = filteredActivities.slice(0, visibleActivityCount);
+
+  function changeActivityFilter(filter: ActivityFilter) {
+    setActivityFilter(filter);
+    setVisibleActivityCount(ACTIVITY_PAGE_SIZE);
+  }
+
+  function updateActivitySearch(value: string) {
+    setActivitySearch(value);
+    setVisibleActivityCount(ACTIVITY_PAGE_SIZE);
+  }
 
   function updatePreferences(patch: Partial<Preferences>) {
     setPreferencesSaved(false);
@@ -194,7 +244,7 @@ export default function AgentView() {
       <section className="mt-7 space-y-5 rounded-3xl border border-border bg-card p-5 shadow-soft sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="ui-title">Scout and application configuration</h2><p className="text-xs text-muted-foreground">Applied today: {quota.applied_today} / {quota.daily_apply_limit} ({quota.remaining_today} remaining)</p></div>
         {loading ? <p className="text-sm text-muted-foreground">Loading your saved preferences...</p> : <>
-          <div className="space-y-2"><label className="text-sm font-medium">Target job roles</label><div className="flex flex-wrap gap-2">{preferences.target_roles.map((role) => <div key={role.id} className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${role.active ? "border-mint/50 bg-accent" : "border-border opacity-60"}`}><button type="button" aria-pressed={role.active} onClick={() => updatePreferences({ target_roles: preferences.target_roles.map((item) => item.id === role.id ? { ...item, active: !item.active } : item) })}>{role.title}</button><button type="button" onClick={() => updatePreferences({ target_roles: preferences.target_roles.filter((item) => item.id !== role.id) })} aria-label={`Remove ${role.title}`}>×</button></div>)}</div><form onSubmit={addRole} className="flex gap-2"><Input value={roleDraft} onChange={(event) => setRoleDraft(event.target.value)} placeholder="Type a job role and press Enter" className="h-11 bg-background" /><Button type="submit" variant="outline" aria-label="Add role"><Plus /></Button></form></div>
+          <div className="space-y-2"><p className="text-sm font-medium">Target job roles</p><div className="flex flex-wrap gap-2">{preferences.target_roles.map((role) => <div key={role.id} className={`flex items-center gap-1 rounded-full border px-3 py-1.5 text-sm ${role.active ? "border-mint/50 bg-accent" : "border-border opacity-60"}`}><button type="button" aria-pressed={role.active} onClick={() => updatePreferences({ target_roles: preferences.target_roles.map((item) => item.id === role.id ? { ...item, active: !item.active } : item) })}>{role.title}</button><button type="button" onClick={() => updatePreferences({ target_roles: preferences.target_roles.filter((item) => item.id !== role.id) })} aria-label={`Remove ${role.title}`}>×</button></div>)}</div><form onSubmit={addRole} className="flex gap-2"><Input aria-label="Add target job role" value={roleDraft} onChange={(event) => setRoleDraft(event.target.value)} placeholder="Type a job role and press Enter" className="h-11 bg-background" /><Button type="submit" variant="outline" aria-label="Add role"><Plus /></Button></form></div>
           <TagInput label="Preferred locations" placeholder="Add locations, press Enter" values={preferences.preferred_locations} onChange={(value) => updatePreferences({ preferred_locations: value })} />
           <div className="space-y-2"><p className="text-sm font-medium">Work modes</p><div className="flex flex-wrap gap-2">{MODES.map((mode) => <Button key={mode} type="button" variant={preferences.work_modes.includes(mode) ? "soft" : "outline"} aria-pressed={preferences.work_modes.includes(mode)} onClick={() => updatePreferences({ work_modes: preferences.work_modes.includes(mode) ? preferences.work_modes.filter((item) => item !== mode) : [...preferences.work_modes, mode] })}>{mode}</Button>)}</div></div>
           <TagInput label="Excluded keywords and blockers" placeholder="Add a keyword, press Enter" values={preferences.excluded_keywords} onChange={(value) => updatePreferences({ excluded_keywords: value })} />
@@ -205,10 +255,110 @@ export default function AgentView() {
 
       <section className="mt-6 rounded-3xl border border-border bg-card p-5 shadow-soft sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="ui-title">Start a search</h2><p className="mt-1 text-sm text-muted-foreground">{preferencesSaved ? "Find matching jobs or tailor a specific posting." : "Save your search configuration before starting."}</p></div><Button variant="hero" onClick={() => void launchScout()} disabled={loading || running || needsSetup || !preferencesSaved}>{running ? "Working..." : <><Radar /> Launch Autonomous Scout</>}</Button></div>
-        <div className="mt-5 border-t border-border pt-5"><div className="mb-3 flex gap-2"><Button type="button" size="sm" variant={pasteMode === "url" ? "soft" : "ghost"} onClick={() => setPasteMode("url")}>Job URL</Button><Button type="button" size="sm" variant={pasteMode === "description" ? "soft" : "ghost"} onClick={() => setPasteMode("description")}>Job description</Button></div><form onSubmit={(event) => void pasteJob(event)} className="space-y-3"><Textarea value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder={pasteMode === "url" ? "Paste a job URL" : "Paste the job description"} rows={4} className="rounded-xl bg-background" /><div className="flex justify-end"><Button type="submit" variant="outline" disabled={loading || running || needsSetup || !preferencesSaved || !pasteText.trim()}>{running ? "Processing..." : "Tailor this job"}</Button></div></form></div>
+        <div className="mt-5 border-t border-border pt-5"><div className="mb-3 flex gap-2"><Button type="button" size="sm" variant={pasteMode === "url" ? "soft" : "ghost"} onClick={() => setPasteMode("url")}>Job URL</Button><Button type="button" size="sm" variant={pasteMode === "description" ? "soft" : "ghost"} onClick={() => setPasteMode("description")}>Job description</Button></div><form onSubmit={(event) => void pasteJob(event)} className="space-y-3"><Textarea aria-label={pasteMode === "url" ? "Job URL" : "Job description"} value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder={pasteMode === "url" ? "Paste a job URL" : "Paste the job description"} rows={4} className="rounded-xl bg-background" /><div className="flex justify-end"><Button type="submit" variant="outline" disabled={loading || running || needsSetup || !preferencesSaved || !pasteText.trim()}>{running ? "Processing..." : "Tailor this job"}</Button></div></form></div>
       </section>
 
-      <section className="mt-8 space-y-3"><div className="flex items-center justify-between"><h2 className="ui-title">Live agent activity</h2>{running && <span className="text-xs text-mint">Updating every 2 seconds</span>}</div>{activities.length === 0 ? <div className="rounded-3xl border border-dashed border-border p-8 text-center"><Radar className="mx-auto size-6 text-mint" /><p className="mt-3 font-medium">No agent activity yet</p><p className="mt-1 text-sm text-muted-foreground">Your real progress updates will appear here after you start a search.</p></div> : <ol className="space-y-2">{activities.map((item) => <li key={item.id} className="rounded-2xl border border-border bg-card p-4"><div className="flex items-start gap-3"><span className={`mt-1.5 size-2 shrink-0 rounded-full ${item.status === "active" ? "animate-pulse bg-mint" : item.status === "error" ? "bg-destructive" : "bg-muted-foreground/50"}`} /><div className="min-w-0 flex-1"><p className="font-medium">{item.title}</p>{item.detail && <p className="mt-1 text-sm text-muted-foreground">{item.detail}</p>}</div><time className="shrink-0 text-xs text-muted-foreground">{new Date(item.timestamp).toLocaleTimeString()}</time></div></li>)}</ol>}</section>
+      <section aria-labelledby="activity-heading" className="mt-8 overflow-hidden rounded-3xl border border-border bg-card shadow-soft">
+        <div className="flex flex-col gap-4 border-b border-border p-5 sm:p-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="flex items-start gap-3">
+              <span className="grid size-10 shrink-0 place-items-center rounded-2xl bg-accent text-mint"><ActivityIcon className="size-5" /></span>
+              <div>
+                <h2 id="activity-heading" className="ui-title">Live agent activity</h2>
+                <p className="mt-1 text-sm text-muted-foreground">A running record of what your agent is doing.</p>
+              </div>
+            </div>
+            <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium ${running ? "border-mint/40 bg-accent text-mint" : "border-border text-muted-foreground"}`}>
+              {running ? <><Loader2 className="size-3.5 animate-spin" /> Live updates</> : <><span className="size-1.5 rounded-full bg-muted-foreground/60" /> Agent idle</>}
+            </span>
+          </div>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Filter agent activity">
+              {([
+                ["all", "All activity", activityCounts.all],
+                ["active", "In progress", activityCounts.active],
+                ["attention", "Needs attention", activityCounts.attention],
+                ["completed", "Completed", activityCounts.completed],
+              ] as const).map(([filter, label, count]) => (
+                <button
+                  key={filter}
+                  type="button"
+                  aria-pressed={activityFilter === filter}
+                  onClick={() => changeActivityFilter(filter)}
+                  className={`inline-flex min-h-9 items-center gap-2 rounded-full border px-3 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${activityFilter === filter ? "border-mint/50 bg-accent text-foreground" : "border-border text-muted-foreground hover:bg-accent/50 hover:text-foreground"}`}
+                >
+                  {label}<span className="font-mono text-[11px] opacity-70">{count}</span>
+                </button>
+              ))}
+            </div>
+            <div className="relative w-full sm:max-w-xs">
+              <Search aria-hidden="true" className="absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                aria-label="Search agent activity"
+                value={activitySearch}
+                onChange={(event) => updateActivitySearch(event.target.value)}
+                placeholder="Search activity"
+                className="h-10 rounded-xl bg-background pl-9"
+              />
+            </div>
+          </div>
+        </div>
+
+        {activities.length === 0 ? (
+          <div className="px-6 py-12 text-center">
+            <Radar className="mx-auto size-7 text-mint" />
+            <p className="mt-3 font-medium">No activity yet</p>
+            <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">Your agent’s progress will appear here when you launch a search or tailor a job.</p>
+          </div>
+        ) : filteredActivities.length === 0 ? (
+          <div className="px-6 py-10 text-center">
+            <p className="font-medium">No matching activity</p>
+            <p className="mt-1 text-sm text-muted-foreground">Try another search or choose a different status filter.</p>
+            <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={() => { updateActivitySearch(""); changeActivityFilter("all"); }}>Clear filters</Button>
+          </div>
+        ) : (
+          <>
+            <ol className="divide-y divide-border">
+              {visibleActivities.map((item) => {
+                const category = activityCategory(item.status);
+                const status = category === "active"
+                  ? { label: "In progress", icon: <Loader2 aria-hidden="true" className="size-3 animate-spin" />, style: "bg-accent text-mint" }
+                  : category === "attention"
+                    ? { label: item.status === "error" ? "Needs attention" : "Waiting on you", icon: <CircleAlert aria-hidden="true" className="size-3" />, style: "bg-warning/15 text-warning-foreground" }
+                    : { label: "Completed", icon: <Check aria-hidden="true" className="size-3" />, style: "bg-muted text-muted-foreground" };
+                return (
+                  <li key={item.id} className="flex gap-3 px-5 py-4 transition-colors hover:bg-accent/20 sm:gap-4 sm:px-6">
+                    <span className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl ${status.style}`}>{status.icon}</span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
+                        <p className="min-w-0 flex-1 text-sm font-medium leading-5">{item.title}</p>
+                        <time dateTime={item.timestamp} className="inline-flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+                          <Clock3 aria-hidden="true" className="size-3" />{formatActivityTime(item.timestamp)}
+                        </time>
+                      </div>
+                      {item.detail && <p className="mt-1.5 break-words text-sm leading-6 text-muted-foreground">{item.detail}</p>}
+                      <span className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-2 py-1 text-[11px] font-medium ${status.style}`}>{status.icon}{status.label}</span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ol>
+            <div className="flex flex-col gap-3 border-t border-border bg-muted/20 px-5 py-3.5 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:px-6">
+              <p>
+                Showing {visibleActivities.length} of {filteredActivities.length} matching
+                {filteredActivities.length === 1 ? " activity" : " activities"}
+                {activities.length >= 100 ? " · latest 100 loaded" : ""}
+              </p>
+              {visibleActivities.length < filteredActivities.length && (
+                <Button type="button" variant="ghost" size="sm" className="self-start sm:self-auto" onClick={() => setVisibleActivityCount((count) => count + ACTIVITY_PAGE_SIZE)}>
+                  Show {Math.min(ACTIVITY_PAGE_SIZE, filteredActivities.length - visibleActivities.length)} more
+                </Button>
+              )}
+            </div>
+          </>
+        )}
+      </section>
 
       <section className="mt-8"><div className="mb-3 flex items-center justify-between"><h2 className="ui-title">Discovered jobs</h2><Link href="/queue" className="flex items-center gap-1 text-sm text-mint hover:underline">Review queue <ArrowRight className="size-3.5" /></Link></div>{jobs.length === 0 ? <p className="rounded-3xl border border-dashed border-border p-7 text-center text-sm text-muted-foreground">No jobs discovered yet. Save your setup and launch the Scout or paste a job.</p> : <ul className="space-y-2">{jobs.map((job) => <li key={job.id} className="flex flex-wrap items-center gap-3 rounded-2xl border border-border bg-card p-4"><MapPin className="size-4 text-muted-foreground" /><div className="min-w-0 flex-1"><p className="truncate font-medium">{job.role_title}</p><p className="truncate text-sm text-muted-foreground">{job.company_name} · {job.location_type}</p></div><span className="text-sm font-medium">{job.match_score}% match</span><span className="rounded-full bg-accent px-2.5 py-1 text-xs">{job.status}</span>{job.external_url && <a href={job.external_url} target="_blank" rel="noreferrer" className="text-sm text-mint underline">View job</a>}{job.status === "DISCOVERED" && <Button size="sm" variant="outline" onClick={() => void tailorJob(job.id)} disabled={running || needsSetup}>Tailor for review</Button>}</li>)}</ul>}</section>
     </div>

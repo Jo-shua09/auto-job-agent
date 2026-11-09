@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type DragEvent, type KeyboardEvent } from "react";
+import { useEffect, useId, useState, type DragEvent, type KeyboardEvent } from "react";
 import { FileUp, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -80,6 +80,7 @@ function newId() {
 }
 
 function TagEditor({ label, values, onChange }: { label: string; values: string[]; onChange: (items: string[]) => void }) {
+  const inputId = useId();
   const [draft, setDraft] = useState("");
   function add(value: string) {
     const tag = value.trim();
@@ -96,7 +97,7 @@ function TagEditor({ label, values, onChange }: { label: string; values: string[
   }
   return (
     <div className="space-y-2">
-      <Label>{label}</Label>
+      <Label htmlFor={inputId}>{label}</Label>
       <div className="flex min-h-11 flex-wrap items-center gap-2 rounded-xl border border-input bg-background p-2">
         {values.map((value) => (
           <button
@@ -110,6 +111,7 @@ function TagEditor({ label, values, onChange }: { label: string; values: string[
           </button>
         ))}
         <input
+          id={inputId}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={handleKeyDown}
@@ -124,10 +126,11 @@ function TagEditor({ label, values, onChange }: { label: string; values: string[
 }
 
 function Field({ label, value, onChange, placeholder = "" }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string }) {
+  const inputId = useId();
   return (
     <div className="space-y-1.5">
-      <Label>{label}</Label>
-      <Input value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="h-11 rounded-xl bg-background" />
+      <Label htmlFor={inputId}>{label}</Label>
+      <Input id={inputId} value={value} onChange={(event) => onChange(event.target.value)} placeholder={placeholder} className="h-11 rounded-xl bg-background" />
     </div>
   );
 }
@@ -224,7 +227,7 @@ export default function VaultView() {
               <Field label="Portfolio URL" value={profile.portfolio_url ?? ""} onChange={(v) => update("portfolio_url", v)} />
               <Field label="GitHub URL" value={profile.github_url} onChange={(v) => update("github_url", v)} />
               <Field label="LinkedIn URL" value={profile.linkedin_url} onChange={(v) => update("linkedin_url", v)} />
-              <div className="space-y-1.5 sm:col-span-2"><Label>Professional summary template</Label><Textarea value={profile.summary_template} onChange={(event) => update("summary_template", event.target.value)} rows={4} className="rounded-xl bg-background" /></div>
+              <div className="space-y-1.5 sm:col-span-2"><Label htmlFor="professional-summary">Professional summary template</Label><Textarea id="professional-summary" value={profile.summary_template} onChange={(event) => update("summary_template", event.target.value)} rows={4} className="rounded-xl bg-background" /></div>
             </div>
           </section>
 
@@ -234,8 +237,8 @@ export default function VaultView() {
               <Field label="Notice period" value={profile.application_defaults.notice_period ?? ""} onChange={(v) => patchDefaults("notice_period", v)} placeholder="e.g. Immediate, 2 Weeks" />
               <Field label="Expected salary" value={profile.application_defaults.expected_salary ?? ""} onChange={(v) => patchDefaults("expected_salary", v)} />
               <Field label="Work authorization" value={profile.application_defaults.work_authorization ?? ""} onChange={(v) => patchDefaults("work_authorization", v)} />
-              <div className="space-y-1.5"><Label>Requires sponsorship</Label><select value={profile.application_defaults.requires_sponsorship ?? ""} onChange={(event) => patchDefaults("requires_sponsorship", event.target.value)} className={`${inputClass} w-full border border-input px-3`}><option value="">Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div>
-              <div className="space-y-1.5"><Label>Preferred work mode</Label><select value={profile.application_defaults.preferred_work_mode ?? ""} onChange={(event) => patchDefaults("preferred_work_mode", event.target.value)} className={`${inputClass} w-full border border-input px-3`}><option value="">Select</option><option value="Remote">Remote</option><option value="Hybrid">Hybrid</option><option value="Onsite">Onsite</option></select></div>
+              <div className="space-y-1.5"><Label htmlFor="requires-sponsorship">Requires sponsorship</Label><select id="requires-sponsorship" value={profile.application_defaults.requires_sponsorship ?? ""} onChange={(event) => patchDefaults("requires_sponsorship", event.target.value)} className={`${inputClass} w-full border border-input px-3`}><option value="">Select</option><option value="No">No</option><option value="Yes">Yes</option></select></div>
+              <div className="space-y-1.5"><Label htmlFor="preferred-work-mode">Preferred work mode</Label><select id="preferred-work-mode" value={profile.application_defaults.preferred_work_mode ?? ""} onChange={(event) => patchDefaults("preferred_work_mode", event.target.value)} className={`${inputClass} w-full border border-input px-3`}><option value="">Select</option><option value="Remote">Remote</option><option value="Hybrid">Hybrid</option><option value="Onsite">Onsite</option></select></div>
             </div>
           </section>
 
@@ -250,7 +253,7 @@ export default function VaultView() {
                 <div className="grid grid-cols-2 gap-3"><Field label="Start date" value={item.start_date} onChange={(v) => patchExperience(item.id, "start_date", v)} /><Field label="End date" value={item.end_date} onChange={(v) => patchExperience(item.id, "end_date", v)} /></div>
                 <TagEditor label="Role tags" values={item.role_tags} onChange={(v) => patchExperience(item.id, "role_tags", v)} />
                 <TagEditor label="Technologies used" values={item.tech_used} onChange={(v) => patchExperience(item.id, "tech_used", v)} />
-                <div className="space-y-1.5 sm:col-span-2"><Label>Verified bullets (one per line)</Label><Textarea value={item.verified_bullets.join("\n")} onChange={(event) => patchExperience(item.id, "verified_bullets", event.target.value.split("\n"))} rows={4} className="rounded-xl bg-background" /></div>
+                <div className="space-y-1.5 sm:col-span-2"><Label htmlFor={`experience-bullets-${item.id}`}>Verified bullets (one per line)</Label><Textarea id={`experience-bullets-${item.id}`} value={item.verified_bullets.join("\n")} onChange={(event) => patchExperience(item.id, "verified_bullets", event.target.value.split("\n"))} rows={4} className="rounded-xl bg-background" /></div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => update("experiences", profile.experiences.filter((entry) => entry.id !== item.id))}><Trash2 /> Remove experience</Button>
             </div>)}
@@ -268,7 +271,7 @@ export default function VaultView() {
                 <TagEditor label="Role tags" values={item.role_tags} onChange={(v) => patchProject(item.id, "role_tags", v)} />
                 <TagEditor label="Tech stack" values={item.tech_stack} onChange={(v) => patchProject(item.id, "tech_stack", v)} />
                 <Field label="Awards or metrics" value={item.awards_or_metrics ?? ""} onChange={(v) => patchProject(item.id, "awards_or_metrics", v)} />
-                <div className="space-y-1.5 sm:col-span-2"><Label>Verified bullets (one per line)</Label><Textarea value={item.verified_bullets.join("\n")} onChange={(event) => patchProject(item.id, "verified_bullets", event.target.value.split("\n"))} rows={4} className="rounded-xl bg-background" /></div>
+                <div className="space-y-1.5 sm:col-span-2"><Label htmlFor={`project-bullets-${item.id}`}>Verified bullets (one per line)</Label><Textarea id={`project-bullets-${item.id}`} value={item.verified_bullets.join("\n")} onChange={(event) => patchProject(item.id, "verified_bullets", event.target.value.split("\n"))} rows={4} className="rounded-xl bg-background" /></div>
               </div>
               <Button variant="ghost" size="sm" onClick={() => update("projects", profile.projects.filter((entry) => entry.id !== item.id))}><Trash2 /> Remove project</Button>
             </div>)}

@@ -1,8 +1,10 @@
+import json
 import os
 import io
+import re
 import uuid
 from datetime import datetime, timezone
-from typing import List, Any
+from typing import Any, List
 from pypdf import PdfReader
 from google import genai
 from google.genai import types
@@ -25,6 +27,32 @@ def clean_no_em_dash(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: clean_no_em_dash(v) for k, v in value.items()}
     return value
+
+def _normalize_cv_profile_payload(payload: Any) -> Any:
+    if not isinstance(payload, dict):
+        return payload
+
+    experiences = payload.get("experiences")
+    for experience in experiences if isinstance(experiences, list) else []:
+        if not isinstance(experience, dict):
+            continue
+        technologies = experience.get("tech_used")
+        if isinstance(technologies, str):
+            experience["tech_used"] = [item.strip() for item in re.split(r"[,\n]", technologies) if item.strip()]
+
+    projects = payload.get("projects")
+    for project in projects if isinstance(projects, list) else []:
+        if not isinstance(project, dict):
+            continue
+        technologies = project.get("tech_stack")
+        if isinstance(technologies, str):
+            project["tech_stack"] = [item.strip() for item in re.split(r"[,\n]", technologies) if item.strip()]
+
+        awards_or_metrics = project.get("awards_or_metrics")
+        if isinstance(awards_or_metrics, list) and all(isinstance(item, str) for item in awards_or_metrics):
+            project["awards_or_metrics"] = "\n".join(item for item in awards_or_metrics if item.strip()) or None
+
+    return payload
 
 def has_verified_profile_content(profile: MasterProfile) -> bool:
     has_experience = any(
@@ -174,6 +202,12 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     2. ZERO AMBIGUITY: Keep every bullet point concrete, specific, and direct. Preserve exact numbers, tools, and outcomes from the original CV. Do not use vague buzzwords.
     3. NO LONG DASHES: Never use the em-dash (—) or en-dash (–) anywhere. Use standard hyphens (-) or colons (:) only.
     4. ROLE TAGS: Tag each experience and project with accurate role_tags (e.g., ["Frontend", "React", "Next.js", "AI", "Flutter", "Mobile"]) based strictly on the technologies used in that item.
+    5. OUTPUT: Return only a valid JSON object matching MasterProfile. Include these fields: user_id, full_name, email, phone, location, portfolio_url, github_url, linkedin_url, summary_template, experiences, projects, education, skills_by_category, application_defaults, and is_onboarded. Keep user_id empty and is_onboarded false; omit updated_at so the application can supply its default timestamp.
+       Each experience must include id, company, role_title, location, start_date, end_date, role_tags, verified_bullets, and tech_used.
+       Each project must include id, name, role, live_url, github_url, role_tags, tech_stack, verified_bullets, and awards_or_metrics.
+       Each education item must include institution, degree, location, and dates.
+       role_tags, verified_bullets, tech_used, and tech_stack must always be JSON arrays of strings, never comma-separated strings. awards_or_metrics must be a single string or null, never an array.
+       Use empty strings, empty lists, or empty objects for information not present in the CV. Use null for unknown optional URLs or metrics.
 
     UPLOADED CV TEXT:
     {raw_text}
@@ -184,12 +218,19 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
-            response_schema=MasterProfile,
             temperature=0.0,  # Locked to 0.0 for deterministic, factual extraction
         ),
     )
 
-    parsed_profile = MasterProfile.model_validate_json(response.text)
+    if not response.text:
+        raise ValueError("The CV parser returned an empty response. Please try uploading the PDF again.")
+
+    try:
+        response_payload = json.loads(response.text)
+    except json.JSONDecodeError as error:
+        raise ValueError("The CV parser returned invalid JSON. Please try uploading the PDF again.") from error
+
+    parsed_profile = MasterProfile.model_validate(_normalize_cv_profile_payload(response_payload))
     user_ref = get_user_ref(user_id)
     parsed_profile.user_id = user_ref.id
     parsed_profile.is_onboarded = has_verified_profile_content(parsed_profile)
