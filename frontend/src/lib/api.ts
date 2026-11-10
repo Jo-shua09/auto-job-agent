@@ -3,6 +3,13 @@ import { getAuthHeaders } from "./auth";
 export const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000").replace(/\/$/, "");
 export const API_URL = API_BASE;
 
+export class ApiRequestError extends Error {
+  constructor(message: string, public readonly status: number) {
+    super(message);
+    this.name = "ApiRequestError";
+  }
+}
+
 async function getErrorMessage(response: Response): Promise<string> {
   let detail: unknown;
   try {
@@ -55,7 +62,7 @@ export async function apiRequest<T>(path: string, optionsOrMethod: RequestInit |
     throw error;
   }
 
-  if (!res.ok) throw new Error(await getErrorMessage(res));
+  if (!res.ok) throw new ApiRequestError(await getErrorMessage(res), res.status);
   if (res.status === 204) return undefined as T;
 
   return res.json() as Promise<T>;

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/app-shell";
-import { apiRequest } from "@/lib/api";
+import { apiRequest, ApiRequestError } from "@/lib/api";
 
 type Role = { id: string; title: string; active: boolean; priority_keywords: string[] };
 type Preferences = {
@@ -98,6 +98,7 @@ export default function AgentView() {
   const [roleDraft, setRoleDraft] = useState("");
   const [pasteText, setPasteText] = useState("");
   const [pasteMode, setPasteMode] = useState<"url" | "description">("url");
+  const [pasteQuotaReached, setPasteQuotaReached] = useState(false);
 
   const loadActivity = useCallback(() => Promise.all([
       apiRequest<Activity[]>("/api/agent/activity-stream?limit=100"),
@@ -213,6 +214,7 @@ export default function AgentView() {
   async function pasteJob(event: FormEvent) {
     event.preventDefault();
     if (!profileReady || !pasteText.trim()) return;
+    setPasteQuotaReached(false);
     setRunning(true);
     try {
       await apiRequest("/api/scout/paste-job", "POST", pasteMode === "url" ? { external_url: pasteText.trim() } : { raw_jd_text: pasteText.trim() });
@@ -220,7 +222,11 @@ export default function AgentView() {
       await refresh();
       toast.success("Tailored application package is ready for review.");
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Could not process this job.");
+      if (error instanceof ApiRequestError && error.status === 429 && /gemini.*(limit|quota)|(limit|quota).*gemini/i.test(error.message)) {
+        setPasteQuotaReached(true);
+      } else {
+        toast.error(error instanceof Error ? error.message : "Could not process this job.");
+      }
     } finally { setRunning(false); }
   }
 
@@ -255,7 +261,18 @@ export default function AgentView() {
 
       <section className="mt-6 rounded-3xl border border-border bg-card p-5 shadow-soft sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="ui-title">Start a search</h2><p className="mt-1 text-sm text-muted-foreground">{preferencesSaved ? "Find matching jobs or tailor a specific posting." : "Save your search configuration before starting."}</p></div><Button variant="hero" onClick={() => void launchScout()} disabled={loading || running || needsSetup || !preferencesSaved}>{running ? "Working..." : <><Radar /> Launch Autonomous Scout</>}</Button></div>
-        <div className="mt-5 border-t border-border pt-5"><div className="mb-3 flex gap-2"><Button type="button" size="sm" variant={pasteMode === "url" ? "soft" : "ghost"} onClick={() => setPasteMode("url")}>Job URL</Button><Button type="button" size="sm" variant={pasteMode === "description" ? "soft" : "ghost"} onClick={() => setPasteMode("description")}>Job description</Button></div><form onSubmit={(event) => void pasteJob(event)} className="space-y-3"><Textarea aria-label={pasteMode === "url" ? "Job URL" : "Job description"} value={pasteText} onChange={(event) => setPasteText(event.target.value)} placeholder={pasteMode === "url" ? "Paste a job URL" : "Paste the job description"} rows={4} className="rounded-xl bg-background" /><div className="flex justify-end"><Button type="submit" variant="outline" disabled={loading || running || needsSetup || !preferencesSaved || !pasteText.trim()}>{running ? "Processing..." : "Tailor this job"}</Button></div></form></div>
+        <div className="mt-5 border-t border-border pt-5"><div className="mb-3 flex gap-2"><Button type="button" size="sm" variant={pasteMode === "url" ? "soft" : "ghost"} onClick={() => setPasteMode("url")}>Job URL</Button><Button type="button" size="sm" variant={pasteMode === "description" ? "soft" : "ghost"} onClick={() => setPasteMode("description")}>Job description</Button></div><form onSubmit={(event) => void pasteJob(event)} className="space-y-3"><Textarea aria-label={pasteMode === "url" ? "Job URL" : "Job description"} value={pasteText} onChange={(event) => { setPasteText(event.target.value); setPasteQuotaReached(false); }} placeholder={pasteMode === "url" ? "Paste a job URL" : "Paste the job description"} rows={4} className="rounded-xl bg-background" /><div className="flex justify-end"><Button type="submit" variant="outline" disabled={loading || running || needsSetup || !preferencesSaved || !pasteText.trim()}>{running ? "Processing..." : "Tailor this job"}</Button></div></form>
+          {pasteQuotaReached && (
+            <div role="alert" className="mt-4 flex items-start gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4">
+              <CircleAlert className="mt-0.5 size-5 shrink-0 text-warning-foreground" />
+              <div className="min-w-0 text-sm">
+                <p className="font-semibold">AI daily limit reached</p>
+                <p className="mt-1 text-muted-foreground">Verdant couldn&apos;t analyze this job because Gemini&apos;s daily AI request limit has been reached. This job wasn&apos;t added to your queue, and no application was submitted.</p>
+                <p className="mt-2 text-muted-foreground">Try again after the limit resets, or check your <a className="font-medium text-foreground underline underline-offset-2" href="https://aistudio.google.com/" target="_blank" rel="noreferrer">Gemini API usage and plan</a>.</p>
+              </div>
+            </div>
+          )}
+        </div>
       </section>
 
       <section aria-labelledby="activity-heading" className="mt-8 overflow-hidden rounded-3xl border border-border bg-card shadow-soft">
