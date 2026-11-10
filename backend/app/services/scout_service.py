@@ -13,6 +13,7 @@ from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, Field
 from google import genai
+from google.genai.errors import ClientError
 from google.genai import types
 
 from app.core.database import get_user_ref
@@ -36,6 +37,11 @@ TRACKING_PARAMS = {
     "utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content",
     "gh_src", "gh_jid", "ref", "source", "fbclid", "gclid", "mc_cid",
 }
+
+
+class GeminiQuotaExceededError(RuntimeError):
+    pass
+
 
 def normalize_job_url(url: str) -> str:
     parsed = urlparse(url.strip())
@@ -227,6 +233,12 @@ def score_job_with_gemini(
         result.extracted_company_name = clean_no_em_dash(result.extracted_company_name)
         result.extracted_role_title = clean_no_em_dash(result.extracted_role_title)
         return result
+    except ClientError as exc:
+        if exc.code == 429:
+            raise GeminiQuotaExceededError(
+                "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+            ) from exc
+        raise ValueError(f"Could not evaluate this job with the configured matching service: {exc}") from exc
     except Exception as exc:
         raise ValueError(f"Could not evaluate this job with the configured matching service: {exc}") from exc
 

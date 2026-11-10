@@ -36,6 +36,7 @@ from app.services.scout_service import (
     log_agent_step,
     get_recent_activity_stream,
     get_applied_jobs_grouped_by_day,
+    GeminiQuotaExceededError,
 )
 from app.services.tailor_service import (
     tailor_and_stage_job,
@@ -314,26 +315,36 @@ async def trigger_scout_run(
     current_user: dict = Depends(get_current_user),
 ):
     uid = current_user["user_id"]
-    log_agent_step(
-        "Scanning Job Platforms & ATS Boards",
-        "Searching across 15+ ATS domains and global feeds for your configured roles...",
-        phase="SCOUT",
-        status="active",
-        user_id=uid,
-    )
-    res = await run_scout_discovery(
-        custom_roles_override=req.custom_roles_override,
-        max_jobs_to_score=req.max_jobs_to_score,
-        user_id=uid,
-    )
-    log_agent_step(
-        f"Found {res['high_match_discovered_count']} Matching Roles",
-        f"Filtered out {res['skipped_duplicates_count']} duplicates and {res['archived_low_or_blocked_count']} low-fit listings.",
-        phase="SCOUT",
-        status="completed",
-        user_id=uid,
-    )
-    return res
+    try:
+        log_agent_step(
+            "Scanning Job Platforms & ATS Boards",
+            "Searching across 15+ ATS domains and global feeds for your configured roles...",
+            phase="SCOUT",
+            status="active",
+            user_id=uid,
+        )
+        res = await run_scout_discovery(
+            custom_roles_override=req.custom_roles_override,
+            max_jobs_to_score=req.max_jobs_to_score,
+            user_id=uid,
+        )
+        log_agent_step(
+            f"Found {res['high_match_discovered_count']} Matching Roles",
+            f"Filtered out {res['skipped_duplicates_count']} duplicates and {res['archived_low_or_blocked_count']} low-fit listings.",
+            phase="SCOUT",
+            status="completed",
+            user_id=uid,
+        )
+        return res
+    except GeminiQuotaExceededError as e:
+        log_agent_step(
+            "Gemini quota reached",
+            str(e),
+            phase="SCOUT",
+            status="error",
+            user_id=uid,
+        )
+        raise HTTPException(status_code=429, detail=str(e)) from e
 
 @app.post("/api/scout/paste-job")
 async def paste_any_job_to_apply(
@@ -392,6 +403,16 @@ async def paste_any_job_to_apply(
             "tailored_result": tailored,
             "daily_quota": ingested["daily_quota"],
         }
+    except GeminiQuotaExceededError as e:
+        log_agent_step(
+            "Gemini quota reached",
+            str(e),
+            phase=phase,
+            job_id=job_id,
+            status="error",
+            user_id=uid,
+        )
+        raise HTTPException(status_code=429, detail=str(e)) from e
     except ValueError as e:
         log_agent_step(
             "Job processing failed",
