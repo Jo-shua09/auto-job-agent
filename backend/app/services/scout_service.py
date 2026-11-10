@@ -6,7 +6,7 @@ import asyncio
 import hashlib
 from collections import defaultdict
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional
 import httpx
 from bs4 import BeautifulSoup
@@ -657,6 +657,22 @@ def get_recent_activity_stream(limit: int = 25, user_id: Optional[str] = None) -
                 step_id = open_step.get("id")
                 if step_id:
                     activity_stream.document(step_id).update({"status": closed_status})
+
+    stale_before = datetime.now(timezone.utc) - timedelta(minutes=15)
+    for item in docs:
+        if item.get("status") != "active":
+            continue
+        try:
+            timestamp = datetime.fromisoformat(item["timestamp"].replace("Z", "+00:00"))
+            if timestamp.tzinfo is None:
+                timestamp = timestamp.replace(tzinfo=timezone.utc)
+        except (KeyError, TypeError, ValueError):
+            timestamp = stale_before - timedelta(seconds=1)
+        if timestamp < stale_before:
+            item["status"] = "stale"
+            step_id = item.get("id")
+            if step_id:
+                activity_stream.document(step_id).update({"status": "stale"})
 
     sorted_docs = sorted(docs, key=lambda x: x.get("timestamp", ""), reverse=True)
     return sorted_docs[:limit]
