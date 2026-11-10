@@ -1,5 +1,6 @@
 import sys
 import asyncio
+import re
 from html import escape
 from pathlib import Path
 from playwright.sync_api import sync_playwright
@@ -7,6 +8,12 @@ from app.models.schemas import MasterProfile, TailoredPackage
 
 GENERATED_PDF_DIR = Path(__file__).resolve().parent.parent.parent / "generated_pdfs"
 GENERATED_PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _safe_filename_part(value: str, fallback: str, max_length: int) -> str:
+    safe_value = re.sub(r"[^\w-]+", "_", value.strip()).strip("_-")
+    return (safe_value or fallback)[:max_length].rstrip("_-") or fallback
+
 
 def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_role_title: str) -> str:
     """Renders a clean, single-column ATS-optimized HTML resume."""
@@ -162,12 +169,13 @@ async def compile_tailored_cv_pdf(
     profile: MasterProfile,
     package: TailoredPackage,
     target_role_title: str = "",
-    filename_prefix: str = "tailored_cv",
+    filename_job_title: str | None = None,
 ) -> str:
     """Compiles the tailored package into a crisp ATS PDF and returns the file URL/path."""
     html_content = build_ats_cv_html(profile, package, target_role_title)
-    safe_name = "".join(c if c.isalnum() or c in ("_", "-") else "_" for c in filename_prefix)
-    pdf_filename = f"{safe_name}_{package.job_id}.pdf"
+    user_name = _safe_filename_part(profile.full_name, "Candidate", 80)
+    job_name = _safe_filename_part(filename_job_title or target_role_title, "Job", 100)
+    pdf_filename = f"{user_name}_{job_name}_CV.pdf"
     local_pdf_path = GENERATED_PDF_DIR / pdf_filename
 
     await asyncio.to_thread(_render_pdf_sync, html_content, str(local_pdf_path))

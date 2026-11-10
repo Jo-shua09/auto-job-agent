@@ -284,12 +284,11 @@ async def test_compile_pdf(
         critic_score=96,
     )
 
-    safe_prefix = "".join(c if c.isalnum() else "_" for c in (profile.full_name or "Candidate"))[:20]
     pdf_url = await compile_tailored_cv_pdf(
         profile=profile,
         package=sample_package,
         target_role_title=custom_role_title,
-        filename_prefix=f"{safe_prefix}_{custom_role_title[:20]}",
+        filename_job_title=custom_role_title,
     )
 
     return {

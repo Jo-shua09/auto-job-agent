@@ -268,12 +268,11 @@ async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> di
     package = merge_draft_with_verified_vault(profile, draft, audit, job_id)
 
     # Compile deterministic ATS PDF
-    safe_company = "".join(c if c.isalnum() else "_" for c in job.company_name)[:20]
     pdf_url = await compile_tailored_cv_pdf(
         profile=profile,
         package=package,
         target_role_title=package.target_role_headline,
-        filename_prefix=f"tailored_{safe_company}",
+        filename_job_title=job.role_title,
     )
     package.cv_pdf_url = pdf_url
 
