@@ -581,7 +581,7 @@ def _execute_playwright_application_sync(
                 "company_name": job.company_name,
                 "role_title": job.role_title,
                 "fields_filled": filled_count,
-                "screenshot_url": f"http://localhost:8000{screenshot_url}",
+                "screenshot_url": screenshot_url,
             }
 
         except ApplicationStopRequested:

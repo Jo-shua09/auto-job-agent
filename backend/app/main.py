@@ -302,7 +302,7 @@ async def test_compile_pdf(
         "status": "compiled",
         "target_role": custom_role_title,
         "selected_projects": [p.name for p in selected_projs],
-        "preview_url": f"http://localhost:8000{pdf_url}",
+        "preview_url": pdf_url,
     }
 
 
@@ -341,6 +341,8 @@ async def paste_any_job_to_apply(
     current_user: dict = Depends(get_current_user),
 ):
     uid = current_user["user_id"]
+    phase = "SCOUT"
+    job_id: Optional[str] = None
     try:
         log_agent_step(
             "Analyzing Pasted Job Opportunity",
@@ -359,6 +361,15 @@ async def paste_any_job_to_apply(
         )
         job = ingested["job"]
         job_id = job["id"]
+        log_agent_step(
+            f"Job Identified: {job['role_title']} at {job['company_name']}",
+            "Job details extracted. Starting CV tailoring for your review.",
+            phase="SCOUT",
+            job_id=job_id,
+            status="completed",
+            user_id=uid,
+        )
+        phase = "TAILOR"
         log_agent_step(
             f"Tailoring CV & Cover Letter for {job['company_name']}",
             f"Matching verified projects from your Vault for {job['role_title']}...",
@@ -382,7 +393,25 @@ async def paste_any_job_to_apply(
             "daily_quota": ingested["daily_quota"],
         }
     except ValueError as e:
+        log_agent_step(
+            "Job processing failed",
+            str(e),
+            phase=phase,
+            job_id=job_id,
+            status="error",
+            user_id=uid,
+        )
         raise HTTPException(status_code=400, detail=str(e))
+    except Exception:
+        log_agent_step(
+            "Job processing failed",
+            "The backend encountered an unexpected error. Check the backend logs for details.",
+            phase=phase,
+            job_id=job_id,
+            status="error",
+            user_id=uid,
+        )
+        raise
 
 @app.get("/api/jobs")
 def get_jobs(

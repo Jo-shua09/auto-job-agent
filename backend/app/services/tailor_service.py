@@ -357,7 +357,7 @@ async def tailor_and_stage_job(
             "role_title": job.role_title,
             "critic_score": package.critic_score,
             "critic_feedback": package.critic_feedback,
-            "cv_preview_url": f"http://localhost:8000{pdf_url}",
+            "cv_preview_url": pdf_url,
             "tailored_package": package_payload,
         }
     except Exception:

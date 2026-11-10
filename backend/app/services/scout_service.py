@@ -728,12 +728,8 @@ def get_applied_jobs_grouped_by_day(user_id: Optional[str] = None) -> dict:
             "applied_day_key": day_key,
             "applied_day_label": day_label,
             "applied_time_label": time_label,
-            "cv_preview_url": f"http://localhost:8000{cv_path}" if cv_path else None,
-            "screenshot_url": (
-                screenshot_path
-                if not screenshot_path or screenshot_path.startswith("http")
-                else f"http://localhost:8000{screenshot_path}"
-            ),
+            "cv_preview_url": cv_path,
+            "screenshot_url": screenshot_path,
             "last_email_category": j.get("last_email_category"),
             "cover_letter_text": pkg.get("cover_letter_text"),
             "critic_score": pkg.get("critic_score"),
