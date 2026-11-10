@@ -599,7 +599,7 @@ def _execute_playwright_application_sync(
                 "Stopped at the user's request. Verify the employer's application page before retrying.",
                 phase="APPLY",
                 job_id=job_id,
-                status="error",
+                status="stopped",
                 user_id=user_id,
             )
             browser.close()

@@ -612,6 +612,19 @@ def log_agent_step(
     so the UI can display exactly what the agent is doing in human terms.
     """
     user_ref = get_user_ref(user_id)
+    if status in {"completed", "waiting_input", "error", "stopped"}:
+        activity_stream = user_ref.collection("activity_stream")
+        for doc in activity_stream.stream():
+            previous = doc.to_dict() or {}
+            if (
+                previous.get("status") == "active"
+                and previous.get("phase") == phase
+                and previous.get("job_id") == job_id
+            ):
+                activity_stream.document(doc.id).update(
+                    {"status": "stopped" if status == "stopped" else "completed"}
+                )
+
     step_id = f"step_{uuid.uuid4().hex[:10]}"
     payload = {
         "id": step_id,
@@ -628,7 +641,23 @@ def log_agent_step(
 def get_recent_activity_stream(limit: int = 25, user_id: Optional[str] = None) -> List[dict]:
     """Returns the latest plain-English agent steps for the Lovable-style progress stream."""
     user_ref = get_user_ref(user_id)
-    docs = [d.to_dict() for d in user_ref.collection("activity_stream").stream()]
+    activity_stream = user_ref.collection("activity_stream")
+    docs = [d.to_dict() or {} for d in activity_stream.stream()]
+    chronological_docs = sorted(docs, key=lambda x: x.get("timestamp", ""))
+    open_steps: dict[tuple[str, Optional[str]], list[dict]] = defaultdict(list)
+
+    for item in chronological_docs:
+        key = (item.get("phase", ""), item.get("job_id"))
+        if item.get("status") == "active":
+            open_steps[key].append(item)
+        elif item.get("status") in {"completed", "waiting_input", "error", "stopped"}:
+            closed_status = "stopped" if item.get("status") == "stopped" else "completed"
+            for open_step in open_steps.pop(key, []):
+                open_step["status"] = closed_status
+                step_id = open_step.get("id")
+                if step_id:
+                    activity_stream.document(step_id).update({"status": closed_status})
+
     sorted_docs = sorted(docs, key=lambda x: x.get("timestamp", ""), reverse=True)
     return sorted_docs[:limit]
 

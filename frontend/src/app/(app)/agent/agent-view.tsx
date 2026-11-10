@@ -326,7 +326,7 @@ export default function AgentView() {
                   ? { label: "In progress", icon: <Loader2 aria-hidden="true" className="size-3 animate-spin" />, style: "bg-accent text-mint" }
                   : category === "attention"
                     ? { label: item.status === "error" ? "Needs attention" : "Waiting on you", icon: <CircleAlert aria-hidden="true" className="size-3" />, style: "bg-warning/15 text-warning-foreground" }
-                    : { label: "Completed", icon: <Check aria-hidden="true" className="size-3" />, style: "bg-muted text-muted-foreground" };
+                    : { label: item.status === "stopped" ? "Stopped" : "Completed", icon: <Check aria-hidden="true" className="size-3" />, style: "bg-muted text-muted-foreground" };
                 return (
                   <li key={item.id} className="flex gap-3 px-5 py-4 transition-colors hover:bg-accent/20 sm:gap-4 sm:px-6">
                     <span className={`mt-0.5 grid size-8 shrink-0 place-items-center rounded-xl ${status.style}`}>{status.icon}</span>
