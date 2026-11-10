@@ -14,6 +14,7 @@ import {
   ShieldCheck,
   Radar,
   RefreshCw,
+  Square,
   Sun,
   PanelLeftClose,
   PanelLeftOpen,
@@ -77,8 +78,26 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [apiError, setApiError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
+  const [applicationControl, setApplicationControl] = useState({
+    active: false,
+    stop_requested: false,
+    job_id: null as string | null,
+  });
+  const [stoppingApplication, setStoppingApplication] = useState(false);
   useEffect(() => {
     let active = true;
+    const refreshApplicationControl = async () => {
+      try {
+        const status = await apiRequest<{
+          active: boolean;
+          stop_requested: boolean;
+          job_id: string | null;
+        }>("/api/apply/control");
+        if (active) setApplicationControl(status);
+      } catch {
+        if (active) setApiError("We couldn't check the application status. Please retry before starting another application.");
+      }
+    };
     const refreshWorkspace = async () => {
       setRefreshing(true);
       try {
@@ -106,6 +125,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         setQueueCount(0);
         setQuota({ applied_today: 0, daily_apply_limit: 10 });
         setApiError(null);
+        setApplicationControl({ active: false, stop_requested: false, job_id: null });
         return;
       }
       try {
@@ -115,6 +135,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         if (!active) return;
         setUser({ name: session.user.full_name, email: session.user.email });
         await refreshWorkspace();
+        await refreshApplicationControl();
       } catch {
         if (!active) return;
         logoutUser();
@@ -128,10 +149,14 @@ export function AppShell({ children }: { children: ReactNode }) {
     const timer = window.setInterval(() => {
       if (getAuthToken()) void refreshWorkspace();
     }, 15000);
+    const controlTimer = window.setInterval(() => {
+      if (getAuthToken()) void refreshApplicationControl();
+    }, 2500);
     return () => {
       active = false;
       unsubscribe();
       window.clearInterval(timer);
+      window.clearInterval(controlTimer);
     };
   }, [retryCount, router]);
   const display = user?.name || user?.email?.split("@")[0] || "You";
@@ -139,6 +164,31 @@ export function AppShell({ children }: { children: ReactNode }) {
   async function signOut() {
     logoutUser();
     router.replace("/auth");
+  }
+
+  async function stopApplication() {
+    if (!window.confirm("Stop the active application? If the employer has already received it, this cannot be undone. Check the job status before retrying.")) return;
+    setStoppingApplication(true);
+    try {
+      const result = await apiRequest<{
+        active: boolean;
+        status: string;
+        job_id: string | null;
+      }>("/api/apply/stop", "POST");
+      setApplicationControl((current) => ({
+        ...current,
+        active: result.active,
+        stop_requested: result.status === "stop_requested",
+        job_id: result.job_id,
+      }));
+      if (result.status === "not_running") {
+        setApiError("No active application was running when the stop request arrived.");
+      }
+    } catch (error) {
+      setApiError(error instanceof Error ? error.message : "The application could not be stopped.");
+    } finally {
+      setStoppingApplication(false);
+    }
   }
 
   return (
@@ -312,6 +362,26 @@ export function AppShell({ children }: { children: ReactNode }) {
         )}
       >
         <OtpBanner />
+        {applicationControl.active && (
+          <div role="status" className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 md:mx-8">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold">An application is currently running</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Stopping halts at the next safe checkpoint. A submission already sent cannot be recalled; verify the employer&apos;s site before retrying.
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="destructive"
+              disabled={stoppingApplication || applicationControl.stop_requested}
+              onClick={() => void stopApplication()}
+            >
+              <Square />
+              {applicationControl.stop_requested ? "Stop requested..." : stoppingApplication ? "Requesting stop..." : "Stop application"}
+            </Button>
+          </div>
+        )}
         {apiError && (
           <div role="alert" className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 md:mx-8">
             <AlertCircle className="mt-0.5 size-5 shrink-0 text-destructive" />

@@ -62,6 +62,7 @@ def run_writer_agent(
     job: JobRecord,
     profile: MasterProfile,
     critic_feedback: Optional[str] = None,
+    tailoring_instructions: str = "",
 ) -> WriterDraftOutput:
     """Selects verified experiences/projects and tailors bullets, cover letter, and screening answers."""
     api_key = os.getenv("GEMINI_API_KEY")
@@ -73,6 +74,11 @@ def run_writer_agent(
     revision_clause = (
         f"\nCRITICAL REVISION REQUIRED FROM CRITIC AGENT:\n{critic_feedback}\nFix every issue noted above."
         if critic_feedback else ""
+    )
+    user_instructions = (
+        f"\nCANDIDATE'S JOB-SPECIFIC TAILORING INSTRUCTIONS:\n{tailoring_instructions}\n"
+        "Follow these instructions only when supported by the verified profile."
+        if tailoring_instructions else ""
     )
 
     prompt = f"""
@@ -87,13 +93,14 @@ def run_writer_agent(
 
     CANDIDATE VERIFIED MASTER PROFILE (JSON SOURCE OF TRUTH):
     {profile.model_dump_json()}
+    {user_instructions}
     {revision_clause}
 
     NON-NEGOTIABLE RULES:
     1. ZERO HALLUCINATION: You may ONLY select experiences and projects using their exact `id` from the MasterProfile. Never invent companies, metrics, technologies, or experiences not in the MasterProfile.
     2. ZERO AMBIGUITY: Write crisp, concrete engineering bullet points. State what was built, the exact tools used (from that item's tech_used/tech_stack), and the verified outcome.
     3. NO LONG DASHES: Do NOT use the long em-dash (—) or en-dash (–) anywhere in the summary, bullets, cover letter, or answers. Use standard hyphens (-), commas, or colons (:).
-    4. PROJECT SELECTION: Pick the 3 or 4 projects from MasterProfile whose tech_stack and role_tags best match this specific Job Description.
+    4. SELECTION: Select only from the experiences and projects included in the provided profile. Include each available selected item that is relevant, and do not invent facts.
     """
 
     response = client.models.generate_content(
@@ -174,6 +181,9 @@ def merge_draft_with_verified_vault(
     draft: WriterDraftOutput,
     audit: CriticAuditOutput,
     job_id: str,
+    selected_experience_ids: Optional[List[str]] = None,
+    selected_project_ids: Optional[List[str]] = None,
+    tailoring_instructions: str = "",
 ) -> TailoredPackage:
     """
     Maps the Writer's selected IDs back to the immutable MasterProfile objects.
@@ -182,27 +192,33 @@ def merge_draft_with_verified_vault(
     exp_map: Dict[str, ExperienceItem] = {e.id: e.model_copy(deep=True) for e in profile.experiences}
     proj_map: Dict[str, ProjectItem] = {p.id: p.model_copy(deep=True) for p in profile.projects}
 
+    rewritten_experiences = {item.item_id: item.rewritten_bullets for item in draft.selected_experiences}
+    experience_ids = selected_experience_ids if selected_experience_ids is not None else list(rewritten_experiences)
+    if selected_experience_ids is None:
+        experience_ids = [item_id for item_id in experience_ids if item_id in exp_map]
+    if selected_experience_ids is None and not experience_ids:
+        experience_ids = [item.id for item in profile.experiences]
     final_experiences: List[ExperienceItem] = []
-    for item in draft.selected_experiences:
-        if item.item_id in exp_map:
-            verified_exp = exp_map[item.item_id]
-            if item.rewritten_bullets:
-                verified_exp.verified_bullets = clean_no_em_dash(item.rewritten_bullets)
+    for item_id in experience_ids:
+        if item_id in exp_map:
+            verified_exp = exp_map[item_id]
+            if rewritten_experiences.get(item_id):
+                verified_exp.verified_bullets = clean_no_em_dash(rewritten_experiences[item_id])
             final_experiences.append(verified_exp)
 
-    if not final_experiences:
-        final_experiences = profile.experiences
-
+    rewritten_projects = {item.item_id: item.rewritten_bullets for item in draft.selected_projects}
+    project_ids = selected_project_ids if selected_project_ids is not None else list(rewritten_projects)
+    if selected_project_ids is None:
+        project_ids = [item_id for item_id in project_ids if item_id in proj_map]
+    if selected_project_ids is None and not project_ids:
+        project_ids = [item.id for item in profile.projects[:4]]
     final_projects: List[ProjectItem] = []
-    for item in draft.selected_projects:
-        if item.item_id in proj_map:
-            verified_proj = proj_map[item.item_id]
-            if item.rewritten_bullets:
-                verified_proj.verified_bullets = clean_no_em_dash(item.rewritten_bullets)
+    for item_id in project_ids:
+        if item_id in proj_map:
+            verified_proj = proj_map[item_id]
+            if rewritten_projects.get(item_id):
+                verified_proj.verified_bullets = clean_no_em_dash(rewritten_projects[item_id])
             final_projects.append(verified_proj)
-
-    if not final_projects:
-        final_projects = profile.projects[:4]
 
     qa_dict = {
         clean_no_em_dash(qa.question): clean_no_em_dash(qa.answer)
@@ -216,6 +232,9 @@ def merge_draft_with_verified_vault(
         tailored_summary=clean_no_em_dash(draft.tailored_summary),
         selected_experiences=final_experiences,
         selected_projects=final_projects,
+        selected_experience_ids=[item.id for item in final_experiences],
+        selected_project_ids=[item.id for item in final_projects],
+        tailoring_instructions=clean_no_em_dash(tailoring_instructions),
         critic_score=audit.critic_score,
         critic_feedback=clean_no_em_dash(audit.critic_feedback),
         cover_letter_text=clean_no_em_dash(draft.cover_letter_text),
@@ -224,7 +243,13 @@ def merge_draft_with_verified_vault(
 
 # --- 4. END-TO-END STAGING PIPELINE ORCHESTRATOR (p4_3) ---
 
-async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> dict:
+async def tailor_and_stage_job(
+    job_id: str,
+    user_id: Optional[str] = None,
+    selected_experience_ids: Optional[List[str]] = None,
+    selected_project_ids: Optional[List[str]] = None,
+    tailoring_instructions: str = "",
+) -> dict:
     """
     Executes the full Phase 4 Pipeline for a single job:
     1. Transitions job -> TAILORING_IN_PROGRESS
@@ -252,52 +277,95 @@ async def tailor_and_stage_job(job_id: str, user_id: Optional[str] = None) -> di
     if not profile.is_onboarded or not has_verified_profile_content(profile):
         raise ValueError("Complete your name, email, and at least one verified experience, project, or skill before tailoring.")
 
+    is_customized = selected_experience_ids is not None or selected_project_ids is not None or bool(tailoring_instructions.strip())
+    if is_customized and job.status != JobStatus.AWAITING_APPROVAL:
+        raise ValueError("Only applications waiting for your review can be customized.")
+    if selected_experience_ids is not None:
+        unknown_ids = set(selected_experience_ids) - {item.id for item in profile.experiences}
+        if unknown_ids:
+            raise ValueError("One or more selected experiences are not in your Master Vault.")
+    if selected_project_ids is not None:
+        unknown_ids = set(selected_project_ids) - {item.id for item in profile.projects}
+        if unknown_ids:
+            raise ValueError("One or more selected projects are not in your Master Vault.")
+    if is_customized and not (selected_experience_ids or selected_project_ids):
+        raise ValueError("Select at least one verified experience or project for the CV.")
+
+    writer_profile = profile
+    if is_customized:
+        allowed_experience_ids = set(selected_experience_ids or [])
+        allowed_project_ids = set(selected_project_ids or [])
+        writer_profile = profile.model_copy(
+            update={
+                "experiences": [item for item in profile.experiences if item.id in allowed_experience_ids],
+                "projects": [item for item in profile.projects if item.id in allowed_project_ids],
+            },
+            deep=True,
+        )
+
     # Move state to TAILORING_IN_PROGRESS if coming from DISCOVERED or AWAITING_APPROVAL
     if job.status in {JobStatus.DISCOVERED, JobStatus.AWAITING_APPROVAL}:
         transition_job_state(job_id, JobStatus.TAILORING_IN_PROGRESS, user_id)
 
-    # Pass 1: Writer + Critic
-    draft = run_writer_agent(job, profile)
-    audit = run_critic_agent(job, profile, draft)
+    try:
+        # Pass 1: Writer + Critic
+        draft = run_writer_agent(job, writer_profile, tailoring_instructions=tailoring_instructions)
+        audit = run_critic_agent(job, writer_profile, draft)
 
-    # Pass 2: Automatic Self-Correction Loop if Critic score < 85 or hallucination/dash flagged
-    if audit.critic_score < 85 or not audit.passed_hallucination_check or audit.has_ambiguous_fluff_or_dashes:
-        draft = run_writer_agent(job, profile, critic_feedback=audit.critic_feedback)
-        audit = run_critic_agent(job, profile, draft)
+        # Pass 2: Automatic Self-Correction Loop if Critic score < 85 or hallucination/dash flagged
+        if audit.critic_score < 85 or not audit.passed_hallucination_check or audit.has_ambiguous_fluff_or_dashes:
+            draft = run_writer_agent(
+                job,
+                writer_profile,
+                critic_feedback=audit.critic_feedback,
+                tailoring_instructions=tailoring_instructions,
+            )
+            audit = run_critic_agent(job, writer_profile, draft)
 
-    package = merge_draft_with_verified_vault(profile, draft, audit, job_id)
+        package = merge_draft_with_verified_vault(
+            profile,
+            draft,
+            audit,
+            job_id,
+            selected_experience_ids=selected_experience_ids if is_customized else None,
+            selected_project_ids=selected_project_ids if is_customized else None,
+            tailoring_instructions=tailoring_instructions,
+        )
 
-    # Compile deterministic ATS PDF
-    pdf_url = await compile_tailored_cv_pdf(
-        profile=profile,
-        package=package,
-        target_role_title=package.target_role_headline,
-        filename_job_title=job.role_title,
-    )
-    package.cv_pdf_url = pdf_url
+        pdf_url = await compile_tailored_cv_pdf(
+            profile=profile,
+            package=package,
+            target_role_title=package.target_role_headline,
+            filename_job_title=job.role_title,
+        )
+        package.cv_pdf_url = pdf_url
 
-    # Save tailored package to Firestore
-    package_payload = clean_no_em_dash(package.model_dump(mode="json"))
-    user_ref.collection("tailored_packages").document(job_id).set(package_payload)
+        package_payload = clean_no_em_dash(package.model_dump(mode="json"))
+        user_ref.collection("tailored_packages").document(job_id).set(package_payload)
 
-    # Move job to AWAITING_APPROVAL (95% Auto Review Gate) unless it was explicitly queued for instant apply
-    current_snap = job_doc_ref.get().to_dict()
-    if current_snap.get("status") != JobStatus.APPLYING_QUEUED.value:
-        transition_job_state(job_id, JobStatus.AWAITING_APPROVAL, user_id)
-        final_status = JobStatus.AWAITING_APPROVAL.value
-    else:
-        final_status = JobStatus.APPLYING_QUEUED.value
+        current_snap = job_doc_ref.get().to_dict()
+        if current_snap.get("status") != JobStatus.APPLYING_QUEUED.value:
+            transition_job_state(job_id, JobStatus.AWAITING_APPROVAL, user_id)
+            final_status = JobStatus.AWAITING_APPROVAL.value
+        else:
+            final_status = JobStatus.APPLYING_QUEUED.value
 
-    return {
-        "status": final_status,
-        "job_id": job_id,
-        "company_name": job.company_name,
-        "role_title": job.role_title,
-        "critic_score": package.critic_score,
-        "critic_feedback": package.critic_feedback,
-        "cv_preview_url": f"http://localhost:8000{pdf_url}",
-        "tailored_package": package_payload,
-    }
+        return {
+            "status": final_status,
+            "job_id": job_id,
+            "company_name": job.company_name,
+            "role_title": job.role_title,
+            "critic_score": package.critic_score,
+            "critic_feedback": package.critic_feedback,
+            "cv_preview_url": f"http://localhost:8000{pdf_url}",
+            "tailored_package": package_payload,
+        }
+    except Exception:
+        if is_customized:
+            current_snap = job_doc_ref.get().to_dict()
+            if current_snap and current_snap.get("status") == JobStatus.TAILORING_IN_PROGRESS.value:
+                transition_job_state(job_id, JobStatus.AWAITING_APPROVAL, user_id)
+        raise
 
 async def batch_tailor_discovered_jobs(limit: int = 5, user_id: Optional[str] = None) -> dict:
     """Finds the top-scoring DISCOVERED jobs and runs the Writer-Critic tailoring loop on each."""

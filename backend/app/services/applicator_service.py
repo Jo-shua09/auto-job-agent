@@ -1,7 +1,7 @@
 import os
 import sys
-import time
 import asyncio
+import threading
 from pathlib import Path
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -29,6 +29,70 @@ from app.services.state_machine import transition_job_state
 
 SCREENSHOT_DIR = Path(__file__).resolve().parent.parent.parent / "generated_pdfs" / "screenshots"
 SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
+
+
+class ApplicationStopRequested(Exception):
+    pass
+
+
+class ActiveApplicationRun:
+    def __init__(self) -> None:
+        self.stop_event = threading.Event()
+        self.job_id: Optional[str] = None
+
+
+_active_runs: Dict[str, ActiveApplicationRun] = {}
+_active_runs_lock = threading.Lock()
+
+
+def _start_application_run(user_id: Optional[str]) -> ActiveApplicationRun:
+    if not user_id:
+        raise ValueError("A user account is required to start an application.")
+    with _active_runs_lock:
+        if user_id in _active_runs:
+            raise ValueError("An application run is already active. Stop it or wait for it to finish.")
+        run = ActiveApplicationRun()
+        _active_runs[user_id] = run
+        return run
+
+
+def _finish_application_run(user_id: Optional[str], run: ActiveApplicationRun) -> None:
+    if not user_id:
+        return
+    with _active_runs_lock:
+        if _active_runs.get(user_id) is run:
+            del _active_runs[user_id]
+
+
+def get_application_run_status(user_id: Optional[str]) -> dict:
+    if not user_id:
+        raise ValueError("A user account is required.")
+    with _active_runs_lock:
+        run = _active_runs.get(user_id)
+        if run is None:
+            return {"active": False, "stop_requested": False, "job_id": None}
+        return {
+            "active": True,
+            "stop_requested": run.stop_event.is_set(),
+            "job_id": run.job_id,
+        }
+
+
+def request_application_stop(user_id: Optional[str]) -> dict:
+    if not user_id:
+        raise ValueError("A user account is required.")
+    with _active_runs_lock:
+        run = _active_runs.get(user_id)
+        if run is None:
+            return {"status": "not_running", "active": False, "job_id": None}
+        run.stop_event.set()
+        return {"status": "stop_requested", "active": True, "job_id": run.job_id}
+
+
+def _raise_if_stop_requested(stop_event: threading.Event) -> None:
+    if stop_event.is_set():
+        raise ApplicationStopRequested("Application stopped at the user's request.")
+
 
 # --- 1. TELEMETRY & EXECUTION LOG UPDATER ---
 
@@ -132,6 +196,7 @@ def fill_standard_and_custom_fields_sync(
     package: TailoredPackage,
     job: JobRecord,
     pdf_file_path: Path,
+    stop_event: threading.Event,
 ) -> int:
     """
     Inspects the live page DOM, clicks 'Apply' if needed to reveal the form,
@@ -139,9 +204,11 @@ def fill_standard_and_custom_fields_sync(
     """
     # Step A: If the page has an "Apply for this job" or "Apply" button before the form is visible, click it
     for btn_text in ["Apply for this job", "Apply Now", "Apply", "Submit Application"]:
+        _raise_if_stop_requested(stop_event)
         try:
             btn = page.get_by_role("button", name=btn_text, exact=False).first
             if btn.is_visible(timeout=800) and "submit" not in (btn.get_attribute("type") or "").lower():
+                _raise_if_stop_requested(stop_event)
                 btn.click()
                 page.wait_for_timeout(1200)
                 break
@@ -154,15 +221,18 @@ def fill_standard_and_custom_fields_sync(
     last_name = name_parts[-1] if len(name_parts) > 1 else ""
 
     # Step B: Upload the tailored PDF CV to the first resume file input
+    _raise_if_stop_requested(stop_event)
     if pdf_file_path.exists():
         try:
             file_inputs = page.locator('input[type="file"]').all()
             if file_inputs:
+                _raise_if_stop_requested(stop_event)
                 file_inputs[0].set_input_files(str(pdf_file_path))
                 filled_count += 1
                 page.wait_for_timeout(1000)
         except Exception:
             pass
+    _raise_if_stop_requested(stop_event)
 
     # Step C: Extract all visible text inputs and textareas and fill standard fields heuristically
     inputs = page.locator(
@@ -173,6 +243,7 @@ def fill_standard_and_custom_fields_sync(
     unmapped_locators = {}
 
     for idx, loc in enumerate(inputs):
+        _raise_if_stop_requested(stop_event)
         try:
             if not loc.is_visible():
                 continue
@@ -233,8 +304,11 @@ def fill_standard_and_custom_fields_sync(
 
     # Step D: Use Gemini 2.5 Flash to map remaining custom screening questions
     if unmapped_fields:
+        _raise_if_stop_requested(stop_event)
         ai_mappings = map_custom_dom_fields_with_gemini(unmapped_fields, profile, package, job)
+        _raise_if_stop_requested(stop_event)
         for sel_id, val in ai_mappings.items():
+            _raise_if_stop_requested(stop_event)
             if sel_id in unmapped_locators and val:
                 try:
                     unmapped_locators[sel_id].fill(val)
@@ -293,7 +367,7 @@ def enter_otp_code_on_page(page: Page, otp_code: str) -> bool:
         pass
     return False
 
-def click_submit_button_on_page(page: Page) -> bool:
+def click_submit_button_on_page(page: Page, stop_event: threading.Event) -> bool:
     """Clicks the primary Submit Application button on the form."""
     submit_selectors = [
         'button[type="submit"]',
@@ -303,14 +377,20 @@ def click_submit_button_on_page(page: Page) -> bool:
         'button:has-text("Send Application")',
     ]
     for sel in submit_selectors:
+        _raise_if_stop_requested(stop_event)
         try:
             loc = page.locator(sel).first
-            if loc.is_visible(timeout=800):
-                loc.click()
-                page.wait_for_timeout(2500)
-                return True
         except Exception:
             continue
+        try:
+            visible = loc.is_visible(timeout=800)
+        except Exception:
+            continue
+        if visible:
+            _raise_if_stop_requested(stop_event)
+            loc.click()
+            page.wait_for_timeout(2500)
+            return True
     return False
 
 # --- 4. MAIN SYNCHRONOUS PLAYWRIGHT WORKER (WINDOWS-SAFE) ---
@@ -323,7 +403,10 @@ def _execute_playwright_application_sync(
     headless: bool = True,
     simulate_otp_for_testing: bool = False,
     user_id: Optional[str] = None,
+    stop_event: Optional[threading.Event] = None,
 ) -> dict:
+    if stop_event is None:
+        raise ValueError("An application run control is required.")
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
@@ -355,6 +438,7 @@ def _execute_playwright_application_sync(
         page = context.new_page()
 
         try:
+            _raise_if_stop_requested(stop_event)
             if job.external_url.startswith("http") and "manual-paste.local" not in job.external_url:
                 page.goto(job.external_url, wait_until="domcontentloaded", timeout=25000)
                 page.wait_for_timeout(1500)
@@ -397,11 +481,13 @@ def _execute_playwright_application_sync(
                 package=package,
                 job=job,
                 pdf_file_path=pdf_file_path,
+                stop_event=stop_event,
             )
 
             # Click submit if not simulating pre-submit OTP
             if not simulate_otp_for_testing:
-                click_submit_button_on_page(page)
+                _raise_if_stop_requested(stop_event)
+                click_submit_button_on_page(page, stop_event)
 
             # Check if an Email OTP / Verification Code prompt appeared!
             needs_otp = simulate_otp_for_testing or detect_otp_prompt_on_page(page)
@@ -436,7 +522,8 @@ def _execute_playwright_application_sync(
                 # Poll Firestore every 2 seconds for up to 5 minutes (300s) waiting for user OTP input
                 otp_received = None
                 for _ in range(150):
-                    time.sleep(2)
+                    if stop_event.wait(2):
+                        raise ApplicationStopRequested("Application stopped at the user's request.")
                     snap = user_ref.collection("execution_logs").document(job_id).get()
                     if snap.exists:
                         code_val = snap.to_dict().get("otp_code_input")
@@ -458,9 +545,11 @@ def _execute_playwright_application_sync(
                     return {"status": "failed_otp_timeout", "job_id": job_id}
 
                 # Resume execution with the user's OTP!
+                _raise_if_stop_requested(stop_event)
                 transition_job_state(job_id, JobStatus.APPLYING_ACTIVE, user_id)
                 enter_otp_code_on_page(page, otp_received)
-                click_submit_button_on_page(page)
+                _raise_if_stop_requested(stop_event)
+                click_submit_button_on_page(page, stop_event)
 
             # Capture final confirmation screenshot
             final_shot_name = f"submitted_{job_id}.png"
@@ -495,6 +584,27 @@ def _execute_playwright_application_sync(
                 "screenshot_url": f"http://localhost:8000{screenshot_url}",
             }
 
+        except ApplicationStopRequested:
+            transition_job_state(job_id, JobStatus.FAILED_NEEDS_MANUAL, user_id)
+            update_execution_log(
+                job_id,
+                state="STOPPED",
+                step_message="Stopped at your request. Check the employer's application page before retrying; a submission already sent cannot be recalled.",
+                otp_required=False,
+                error_message="Application stopped by the user; submission status may require manual verification.",
+                user_id=user_id,
+            )
+            log_agent_step(
+                f"Application Stopped: {job.company_name}",
+                "Stopped at the user's request. Verify the employer's application page before retrying.",
+                phase="APPLY",
+                job_id=job_id,
+                status="error",
+                user_id=user_id,
+            )
+            browser.close()
+            return {"status": "STOPPED_NEEDS_REVIEW", "job_id": job_id}
+
         except Exception as e:
             err_shot_name = f"error_{job_id}.png"
             try:
@@ -524,8 +634,9 @@ def _execute_playwright_application_sync(
 
 # --- 5. ASYNC API ORCHESTRATORS ---
 
-async def execute_job_application(
+async def _execute_job_application_with_run(
     job_id: str,
+    run: ActiveApplicationRun,
     headless: bool = True,
     simulate_otp_for_testing: bool = False,
     user_id: Optional[str] = None,
@@ -534,6 +645,9 @@ async def execute_job_application(
     Checks the Daily Limit (default 10), ensures a TailoredPackage PDF exists,
     and runs the Playwright Applicator Worker in a background-safe thread.
     """
+    if run.stop_event.is_set():
+        return {"status": "STOPPED_BEFORE_START", "job_id": job_id}
+    run.job_id = job_id
     quota = get_daily_quota_status(user_id)
     if not quota["can_apply_more_today"]:
         raise ValueError(
@@ -559,6 +673,8 @@ async def execute_job_application(
     package = TailoredPackage.model_validate(pkg_dict)
     pdf_filename = (package.cv_pdf_url or "").replace("/pdfs/", "")
     pdf_file_path = GENERATED_PDF_DIR / pdf_filename
+    if run.stop_event.is_set():
+        return {"status": "STOPPED_BEFORE_START", "job_id": job_id}
 
     # Move job to APPLYING_QUEUED if it was in AWAITING_APPROVAL or DISCOVERED
     if job.status == JobStatus.DISCOVERED:
@@ -570,6 +686,9 @@ async def execute_job_application(
     elif job.status == JobStatus.FAILED_NEEDS_MANUAL:
         transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
 
+    if run.stop_event.is_set():
+        return {"status": "STOPPED_BEFORE_START", "job_id": job_id}
+
     return await asyncio.to_thread(
         _execute_playwright_application_sync,
         job,
@@ -579,35 +698,70 @@ async def execute_job_application(
         headless,
         simulate_otp_for_testing,
         user_id,
+        run.stop_event,
     )
+
+async def execute_job_application(
+    job_id: str,
+    headless: bool = True,
+    simulate_otp_for_testing: bool = False,
+    user_id: Optional[str] = None,
+) -> dict:
+    run = _start_application_run(user_id)
+    try:
+        return await _execute_job_application_with_run(
+            job_id=job_id,
+            run=run,
+            headless=headless,
+            simulate_otp_for_testing=simulate_otp_for_testing,
+            user_id=user_id,
+        )
+    except ApplicationStopRequested:
+        return {"status": "STOPPED_BEFORE_START", "job_id": job_id}
+    finally:
+        _finish_application_run(user_id, run)
 
 async def run_queued_applications_batch(headless: bool = True, user_id: Optional[str] = None) -> dict:
     """Applies to all jobs in APPLYING_QUEUED up to the remaining Daily Application Limit."""
-    user_ref = get_user_ref(user_id)
-    quota = get_daily_quota_status(user_id)
-    remaining = quota["remaining_today"]
+    run = _start_application_run(user_id)
+    try:
+        user_ref = get_user_ref(user_id)
+        quota = get_daily_quota_status(user_id)
+        remaining = quota["remaining_today"]
 
-    if remaining <= 0:
+        if remaining <= 0:
+            return {
+                "status": "daily_limit_reached",
+                "daily_quota": quota,
+                "applied_results": [],
+            }
+
+        queued_docs = (
+            user_ref.collection("jobs")
+            .where("status", "==", JobStatus.APPLYING_QUEUED.value)
+            .stream()
+        )
+        queued_jobs = [d.to_dict() for d in queued_docs][:remaining]
+
+        results = []
+        for job_data in queued_jobs:
+            if run.stop_event.is_set():
+                break
+            result = await _execute_job_application_with_run(
+                job_data["id"],
+                run=run,
+                headless=headless,
+                user_id=user_id,
+            )
+            results.append(result)
+            if run.stop_event.is_set():
+                break
+
         return {
-            "status": "daily_limit_reached",
-            "daily_quota": quota,
-            "applied_results": [],
+            "status": "stopped" if run.stop_event.is_set() else "completed",
+            "processed_count": len(results),
+            "daily_quota": get_daily_quota_status(user_id),
+            "results": results,
         }
-
-    queued_docs = (
-        user_ref.collection("jobs")
-        .where("status", "==", JobStatus.APPLYING_QUEUED.value)
-        .stream()
-    )
-    queued_jobs = [d.to_dict() for d in queued_docs][:remaining]
-
-    results = []
-    for j in queued_jobs:
-        res = await execute_job_application(j["id"], headless=headless, user_id=user_id)
-        results.append(res)
-
-    return {
-        "processed_count": len(results),
-        "daily_quota": get_daily_quota_status(user_id),
-        "results": results,
-    }
+    finally:
+        _finish_application_run(user_id, run)

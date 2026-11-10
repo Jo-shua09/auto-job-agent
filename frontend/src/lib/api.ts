@@ -291,6 +291,9 @@ export interface TailoredPackage {
   tailored_summary: string;
   selected_experiences: ExperienceItem[];
   selected_projects: ProjectItem[];
+  selected_experience_ids?: string[];
+  selected_project_ids?: string[];
+  tailoring_instructions?: string;
   critic_score: number;
   critic_feedback: string;
   cover_letter_text: string;
@@ -311,6 +314,26 @@ export const tailorSingleJob = (jobId: string) =>
   }>(`/api/tailor/${jobId}`, { method: "POST" });
 
 export const getTailoredPackage = (jobId: string) => apiRequest<TailoredPackage>(`/api/tailor/${jobId}`);
+
+export const customizeTailoredPackage = (
+  jobId: string,
+  payload: {
+    selected_experience_ids: string[];
+    selected_project_ids: string[];
+    tailoring_instructions: string;
+  },
+) =>
+  apiRequest<{
+    status: string;
+    job_id: string;
+    critic_score: number;
+    critic_feedback: string;
+    cv_preview_url: string;
+    tailored_package: TailoredPackage;
+  }>(`/api/tailor/${encodeURIComponent(jobId)}/customize`, {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 
 export const updateTailoredPackageFields = (jobId: string, payload: { cover_letter_text?: string; screening_answers?: Record<string, string> }) =>
   apiRequest<TailoredPackage>(`/api/tailor/${jobId}`, {

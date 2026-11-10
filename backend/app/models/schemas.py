@@ -167,6 +167,9 @@ class TailoredPackage(BaseModel):
     cv_pdf_url: Optional[str] = None
     cover_letter_text: Optional[str] = None
     screening_answers: Dict[str, str] = Field(default_factory=dict)
+    selected_experience_ids: List[str] = Field(default_factory=list)
+    selected_project_ids: List[str] = Field(default_factory=list)
+    tailoring_instructions: str = ""
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 # --- 4. EXECUTION & OTP RELAY SCHEMA ---

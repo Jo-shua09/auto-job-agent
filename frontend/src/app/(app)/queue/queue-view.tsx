@@ -2,12 +2,13 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Check, ExternalLink, FileText } from "lucide-react";
+import { Check, ExternalLink, FileText, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/app-shell";
-import { API_URL, apiRequest } from "@/lib/api";
+import { API_URL, apiRequest, customizeTailoredPackage, getMasterVault, type MasterProfile } from "@/lib/api";
 
 type Job = {
   id: string;
@@ -28,6 +29,11 @@ type TailoredPackage = {
   cv_pdf_url?: string | null;
   cover_letter_text?: string | null;
   screening_answers: Record<string, string>;
+  selected_experiences: MasterProfile["experiences"];
+  selected_projects: MasterProfile["projects"];
+  selected_experience_ids?: string[];
+  selected_project_ids?: string[];
+  tailoring_instructions?: string;
 };
 type PackageState =
   | { jobId: string; status: "loading" | "error" }
@@ -40,9 +46,15 @@ export default function QueueView() {
   const [packageState, setPackageState] = useState<PackageState>(null);
   const [coverLetter, setCoverLetter] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [vaultProfile, setVaultProfile] = useState<MasterProfile | null>(null);
+  const [selectedExperienceIds, setSelectedExperienceIds] = useState<string[]>([]);
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [tailoringInstructions, setTailoringInstructions] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [applying, setApplying] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const [cvPreviewVersion, setCvPreviewVersion] = useState(0);
 
   const refreshQueue = async () => {
     const data = await apiRequest<Job[]>("/api/jobs?status=AWAITING_APPROVAL");
@@ -53,6 +65,9 @@ export default function QueueView() {
   };
 
   useEffect(() => {
+    getMasterVault()
+      .then(setVaultProfile)
+      .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load your verified Vault items."));
     apiRequest<Job[]>("/api/jobs?status=AWAITING_APPROVAL")
       .then(setJobs)
       .catch((error: unknown) => toast.error(error instanceof Error ? error.message : "Could not load the review queue."))
@@ -68,6 +83,13 @@ export default function QueueView() {
         setPackageState({ jobId: selectedId, status: "loaded", data: result });
         setCoverLetter(result.cover_letter_text ?? "");
         setAnswers(result.screening_answers ?? {});
+        setSelectedExperienceIds(
+          result.selected_experience_ids ?? result.selected_experiences.map((item) => item.id),
+        );
+        setSelectedProjectIds(
+          result.selected_project_ids ?? result.selected_projects.map((item) => item.id),
+        );
+        setTailoringInstructions(result.tailoring_instructions ?? "");
       })
       .catch((error: unknown) => {
         if (active) {
@@ -111,12 +133,46 @@ export default function QueueView() {
     } finally { setApplying(false); }
   }
 
+  async function regenerateTailoredCv() {
+    if (!selectedId) return;
+    if (!selectedExperienceIds.length && !selectedProjectIds.length) {
+      toast.error("Choose at least one verified experience or project for the CV.");
+      return;
+    }
+    setRegenerating(true);
+    try {
+      if (!await saveEdits()) throw new Error("Save your current edits before regenerating the CV.");
+      const result = await customizeTailoredPackage(selectedId, {
+        selected_experience_ids: selectedExperienceIds,
+        selected_project_ids: selectedProjectIds,
+        tailoring_instructions: tailoringInstructions,
+      });
+      setPackageState({ jobId: selectedId, status: "loaded", data: result.tailored_package });
+      const updatedPackage = await apiRequest<TailoredPackage>(
+        `/api/tailor/${encodeURIComponent(selectedId)}`,
+        "PATCH",
+        { cover_letter_text: coverLetter, screening_answers: answers },
+      );
+      setPackageState({ jobId: selectedId, status: "loaded", data: updatedPackage });
+      setSelectedExperienceIds(updatedPackage.selected_experience_ids ?? []);
+      setSelectedProjectIds(updatedPackage.selected_project_ids ?? []);
+      setTailoringInstructions(updatedPackage.tailoring_instructions ?? "");
+      setCvPreviewVersion((version) => version + 1);
+      toast.success("Your customized CV is ready to review.");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Could not regenerate the tailored CV.");
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
   const selected = jobs.find((job) => job.id === selectedId);
   const packageData = packageState?.jobId === selectedId && packageState.status === "loaded" ? packageState.data : null;
   const packageLoading = Boolean(selectedId) && (
     packageState?.jobId !== selectedId || packageState.status === "loading"
   );
   const pdfUrl = packageData?.cv_pdf_url ? (packageData.cv_pdf_url.startsWith("http") ? packageData.cv_pdf_url : `${API_URL}${packageData.cv_pdf_url}`) : null;
+  const versionedPdfUrl = pdfUrl ? `${pdfUrl}?v=${cvPreviewVersion}` : null;
 
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 md:px-8 md:py-12">
@@ -130,10 +186,71 @@ export default function QueueView() {
           {packageLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading tailored application...</p> : !packageData ? <p className="py-6 text-sm text-muted-foreground">The tailored package is not available.</p> : <>
             <div className="grid gap-5 xl:grid-cols-2">
               <div className="space-y-4"><div><p className="text-sm font-medium">Tailored headline</p><p className="mt-1">{packageData.target_role_headline}</p></div><div><p className="text-sm font-medium">Tailored summary</p><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{packageData.tailored_summary}</p></div><p className="text-sm">Review score: <span className="font-semibold">{packageData.critic_score}/100</span>{packageData.critic_feedback && <span className="ml-2 text-muted-foreground">{packageData.critic_feedback}</span>}</p>
+                <section className="space-y-4 rounded-xl border border-border p-4">
+                  <div>
+                    <h3 className="font-medium">Customize this CV</h3>
+                    <p className="mt-1 text-sm text-muted-foreground">Choose the verified Vault items to include. Your Master Vault stays unchanged.</p>
+                  </div>
+                  {!vaultProfile ? <p className="text-sm text-muted-foreground">Loading your Vault items...</p> : (
+                    <>
+                      <fieldset className="space-y-2">
+                        <legend className="mb-2 text-sm font-medium">Experiences</legend>
+                        {vaultProfile.experiences.length === 0 ? <p className="text-sm text-muted-foreground">No verified experiences in your Vault.</p> : vaultProfile.experiences.map((experience) => (
+                          <label key={experience.id} className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm">
+                            <Checkbox
+                              checked={selectedExperienceIds.includes(experience.id)}
+                              onCheckedChange={(checked) => setSelectedExperienceIds((current) => checked
+                                ? [...current, experience.id]
+                                : current.filter((id) => id !== experience.id))}
+                            />
+                            <span className="min-w-0"><span className="block font-medium">{experience.role_title} · {experience.company}</span><span className="mt-1 block text-muted-foreground">{experience.start_date} - {experience.end_date}</span></span>
+                          </label>
+                        ))}
+                      </fieldset>
+                      <fieldset className="space-y-2">
+                        <legend className="mb-2 text-sm font-medium">Projects</legend>
+                        {vaultProfile.projects.length === 0 ? <p className="text-sm text-muted-foreground">No verified projects in your Vault.</p> : vaultProfile.projects.map((project) => (
+                          <label key={project.id} className="flex cursor-pointer items-start gap-3 rounded-lg border border-border p-3 text-sm">
+                            <Checkbox
+                              checked={selectedProjectIds.includes(project.id)}
+                              onCheckedChange={(checked) => setSelectedProjectIds((current) => checked
+                                ? [...current, project.id]
+                                : current.filter((id) => id !== project.id))}
+                            />
+                            <span className="min-w-0"><span className="block font-medium">{project.name}</span><span className="mt-1 block text-muted-foreground">{project.tech_stack.join(", ")}</span></span>
+                          </label>
+                        ))}
+                      </fieldset>
+                    </>
+                  )}
+                  <div className="space-y-2">
+                    <label htmlFor="tailoring-instructions" className="text-sm font-medium">Instructions for the writer</label>
+                    <Textarea
+                      id="tailoring-instructions"
+                      value={tailoringInstructions}
+                      onChange={(event) => setTailoringInstructions(event.target.value)}
+                      maxLength={2000}
+                      rows={4}
+                      placeholder="For example: Emphasize the API work in Project X and prioritize my Python experience."
+                      className="rounded-xl bg-background"
+                    />
+                    <p className="text-xs text-muted-foreground">The writer may only use facts already present in your verified Vault.</p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="w-full"
+                    onClick={() => void regenerateTailoredCv()}
+                    disabled={regenerating || saving || applying || !vaultProfile}
+                  >
+                    <RefreshCw className={regenerating ? "animate-spin" : ""} />
+                    {regenerating ? "Regenerating CV..." : "Regenerate tailored CV"}
+                  </Button>
+                </section>
                 <div className="space-y-2"><label htmlFor="cover-letter" className="text-sm font-medium">Cover letter</label><Textarea id="cover-letter" value={coverLetter} onChange={(event) => setCoverLetter(event.target.value)} rows={10} className="rounded-xl bg-background" /></div>
                 <div className="space-y-3"><p className="text-sm font-medium">Screening answers</p>{Object.entries(answers).length === 0 ? <p className="text-sm text-muted-foreground">No screening answers were generated.</p> : Object.entries(answers).map(([question, answer], index) => <div key={question} className="space-y-1.5 rounded-xl border border-border p-3"><label htmlFor={`screening-answer-${index}`} className="text-sm font-medium">{question}</label><Textarea id={`screening-answer-${index}`} value={answer} onChange={(event) => setAnswers((current) => ({ ...current, [question]: event.target.value }))} rows={3} className="rounded-lg bg-background" /></div>)}</div>
               </div>
-              <div className="min-w-0"><div className="mb-2 flex items-center gap-2"><FileText className="size-4" /><h3 className="font-medium">Compiled tailored CV</h3></div>{pdfUrl ? <iframe title={`Tailored CV for ${selected.role_title}`} src={pdfUrl} className="h-[720px] w-full rounded-xl border border-border bg-white" /> : <div className="grid h-60 place-items-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">No compiled PDF is attached to this package.</div>}</div>
+              <div className="min-w-0"><div className="mb-2 flex items-center gap-2"><FileText className="size-4" /><h3 className="font-medium">Compiled tailored CV</h3></div>{versionedPdfUrl ? <iframe title={`Tailored CV for ${selected.role_title}`} src={versionedPdfUrl} className="h-[720px] w-full rounded-xl border border-border bg-white" /> : <div className="grid h-60 place-items-center rounded-xl border border-dashed border-border text-sm text-muted-foreground">No compiled PDF is attached to this package.</div>}</div>
             </div>
             <div className="flex flex-wrap justify-end gap-2 border-t border-border pt-4"><Button variant="outline" onClick={() => void saveEdits()} disabled={saving || applying}>{saving ? "Saving..." : "Save edits"}</Button><Button variant="hero" onClick={() => void approveAndApply()} disabled={applying || saving || packageLoading}><Check /> {applying ? "Starting application..." : "Approve & Auto-Apply"}</Button></div>
           </>}

@@ -46,6 +46,8 @@ from app.services.applicator_service import (
     execute_job_application,
     run_queued_applications_batch,
     get_execution_log,
+    get_application_run_status,
+    request_application_stop,
 )
 from app.services.inbox_service import (
     poll_gmail_inbox_sync,
@@ -107,6 +109,11 @@ class PasteAnyJobRequest(BaseModel):
 class UpdateScreeningAnswersRequest(BaseModel):
     cover_letter_text: Optional[str] = None
     screening_answers: Optional[Dict[str, str]] = None
+
+class CustomizeTailoredPackageRequest(BaseModel):
+    selected_experience_ids: List[str] = Field(default_factory=list, max_length=50)
+    selected_project_ids: List[str] = Field(default_factory=list, max_length=50)
+    tailoring_instructions: str = Field(default="", max_length=2000)
 
 class SubmitOTPRequest(BaseModel):
     otp_code: str = Field(min_length=3, max_length=12)
@@ -441,6 +448,23 @@ def read_tailored_package(
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
+@app.post("/api/tailor/{job_id}/customize")
+async def customize_tailored_package(
+    job_id: str,
+    req: CustomizeTailoredPackageRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    try:
+        return await tailor_and_stage_job(
+            job_id,
+            user_id=current_user["user_id"],
+            selected_experience_ids=req.selected_experience_ids,
+            selected_project_ids=req.selected_project_ids,
+            tailoring_instructions=req.tailoring_instructions,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
 @app.patch("/api/tailor/{job_id}")
 def update_tailored_package_fields(
     job_id: str,
@@ -550,7 +574,20 @@ async def trigger_queued_applications_batch(
     headless: bool = Query(default=True),
     current_user: dict = Depends(get_current_user),
 ):
-    return await run_queued_applications_batch(headless=headless, user_id=current_user["user_id"])
+    try:
+        return await run_queued_applications_batch(headless=headless, user_id=current_user["user_id"])
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/api/apply/control")
+def read_application_control(current_user: dict = Depends(get_current_user)):
+    return get_application_run_status(current_user["user_id"])
+
+
+@app.post("/api/apply/stop")
+def stop_active_application(current_user: dict = Depends(get_current_user)):
+    return request_application_stop(current_user["user_id"])
 
 @app.get("/api/apply/{job_id}/log")
 def read_job_execution_log(
