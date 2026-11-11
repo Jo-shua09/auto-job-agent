@@ -211,6 +211,21 @@ export default function AgentView() {
       await refresh().catch((refreshError: unknown) => toast.error(refreshError instanceof Error ? refreshError.message : "Could not refresh agent activity."));
     } finally { setRunning(false); }
   }
+  function getFriendlyErrorMessage(error: unknown) {
+    const rawMessage = error instanceof Error ? error.message : "Could not process this job.";
+    const normalized = rawMessage.toLowerCase();
+
+    if (/gemini.*(quota|limit)|ai.*(daily|quota).*limit|daily.*limit.*reached|quota.*reset/i.test(rawMessage)) {
+      return "Your AI daily limit has been reached. Please try again later.";
+    }
+
+    if (/backend encountered an unexpected error|internal server error|check the backend logs|stack trace|traceback/i.test(normalized)) {
+      return "We couldn't process that job right now. This is usually a temporary service issue or an AI quota issue. Please try again in a minute.";
+    }
+
+    return rawMessage;
+  }
+
   async function pasteJob(event: FormEvent) {
     event.preventDefault();
     if (!profileReady || !pasteText.trim()) return;
@@ -225,7 +240,7 @@ export default function AgentView() {
       if (error instanceof ApiRequestError && error.status === 429 && /gemini.*(limit|quota)|(limit|quota).*gemini/i.test(error.message)) {
         setPasteQuotaReached(true);
       } else {
-        toast.error(error instanceof Error ? error.message : "Could not process this job.");
+        toast.error(getFriendlyErrorMessage(error));
       }
     } finally { setRunning(false); }
   }

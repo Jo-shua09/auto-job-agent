@@ -19,6 +19,17 @@ async function getErrorMessage(response: Response): Promise<string> {
     // Use the status-based message below when the response is not JSON.
   }
 
+  const detailText = typeof detail === "string" ? detail.trim() : "";
+  const normalizedDetail = detailText.toLowerCase();
+
+  if (detailText && /(gemini.*(quota|limit)|ai.*(daily|quota).*limit|quota.*reset|daily.*limit.*reached)/i.test(detailText)) {
+    return "Your AI daily limit has been reached. Please try again later.";
+  }
+
+  if (detailText && /(backend encountered an unexpected error|internal server error|check the backend logs|stack trace|traceback)/i.test(detailText)) {
+    return "We couldn't process that job right now. This is usually a temporary service issue or an AI quota issue. Please try again in a minute.";
+  }
+
   if (response.status >= 500) return "The job service is temporarily unavailable. Please try again shortly.";
   if (typeof detail === "string" && detail.trim() && !/(traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
     return detail;
