@@ -2,10 +2,10 @@ import os
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
-from google import genai
 from google.genai.errors import ClientError
 from google.genai import types
 
+from app.core.gemini_client import create_gemini_client
 from app.core.database import get_user_ref
 from app.models.schemas import (
     MasterProfile,
@@ -72,7 +72,7 @@ def run_writer_agent(
     if not api_key or api_key == "your_gemini_api_key_here":
         raise ValueError("Set GEMINI_API_KEY before tailoring applications. No generated profile content will be substituted.")
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     revision_clause = (
         f"\nCRITICAL REVISION REQUIRED FROM CRITIC AGENT:\n{critic_feedback}\nFix every issue noted above."
         if critic_feedback else ""
@@ -140,7 +140,7 @@ def run_critic_agent(
             critic_feedback="Verified deterministic fallback against Master Profile Vault. Zero hallucinations detected.",
         )
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     prompt = f"""
     You are the Strict Technical Resume Critic & Fact-Auditor Agent.
     Audit the Writer Agent's tailored resume draft against the candidate's MasterProfile and the Job Description.

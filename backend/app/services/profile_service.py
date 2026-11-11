@@ -6,8 +6,8 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, List
 from pypdf import PdfReader
-from google import genai
 from google.genai import types
+from app.core.gemini_client import create_gemini_client
 from app.core.database import get_user_ref
 from app.models.schemas import (
     MasterProfile,
@@ -192,7 +192,7 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     if not api_key or api_key == "your_gemini_api_key_here":
         raise ValueError("Please set a valid GEMINI_API_KEY in backend/.env to parse uploaded PDFs.")
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     prompt = f"""
     You are a strict, zero-hallucination CV parser. Your job is to convert the user's uploaded CV text
     into the structured MasterProfile JSON schema so it can be used as a clean template.

@@ -7,9 +7,9 @@ from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from playwright.sync_api import sync_playwright, Page
-from google import genai
 from google.genai import types
 
+from app.core.gemini_client import create_gemini_client
 from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
@@ -146,7 +146,7 @@ def map_custom_dom_fields_with_gemini(
     if not dom_fields or not api_key or api_key == "your_gemini_api_key_here":
         return {}
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     prompt = f"""
     You are an autonomous browser form-filling mapper. Map the unmapped form inputs below
     to the candidate's MasterProfile, Cover Letter, and Tailored Screening Answers.

@@ -12,10 +12,10 @@ import httpx
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, Field
-from google import genai
 from google.genai.errors import ClientError
 from google.genai import types
 
+from app.core.gemini_client import create_gemini_client
 from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
@@ -192,7 +192,7 @@ def score_job_with_gemini(
             match_reasoning=f"Matched {len(matched_skills)} core skills from your Master Vault ({', '.join(matched_skills[:5])}).",
         )
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     prompt = f"""
     Analyze this Job Post against the candidate's Master Profile and Active Target Roles.
     If COMPANY or ROLE TITLE are marked 'AUTO_DETECT', extract the real company name and role title from the text.
@@ -238,9 +238,9 @@ def score_job_with_gemini(
             raise GeminiQuotaExceededError(
                 "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
             ) from exc
-        raise ValueError(f"Could not evaluate this job with the configured matching service: {exc}") from exc
+        raise ValueError("The job analysis service is temporarily unavailable. Please try again shortly.") from exc
     except Exception as exc:
-        raise ValueError(f"Could not evaluate this job with the configured matching service: {exc}") from exc
+        raise ValueError("The job analysis service is temporarily unavailable. Please try again shortly.") from exc
 
 # --- 3. MULTI-PLATFORM DISCOVERY SOURCES ---
 

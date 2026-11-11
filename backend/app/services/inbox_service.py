@@ -7,9 +7,9 @@ from email.header import decode_header
 from datetime import datetime, timezone
 from typing import List, Optional
 from pydantic import BaseModel, Field
-from google import genai
 from google.genai import types
 
+from app.core.gemini_client import create_gemini_client
 from app.core.database import get_user_ref
 from app.models.schemas import JobStatus
 from app.services.profile_service import clean_no_em_dash
@@ -89,7 +89,7 @@ def classify_recruiter_email_with_gemini(
             action_required=clean_no_em_dash(act) if act else None,
         )
 
-    client = genai.Client(api_key=api_key)
+    client = create_gemini_client(api_key)
     prompt = f"""
     Classify this incoming email for a candidate tracking job applications.
 
