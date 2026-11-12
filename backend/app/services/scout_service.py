@@ -43,6 +43,10 @@ class GeminiQuotaExceededError(RuntimeError):
     pass
 
 
+class GeminiServiceUnavailableError(RuntimeError):
+    pass
+
+
 def normalize_job_url(url: str) -> str:
     parsed = urlparse(url.strip())
     clean_query = urlencode(
@@ -238,9 +242,13 @@ def score_job_with_gemini(
             raise GeminiQuotaExceededError(
                 "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
             ) from exc
-        raise ValueError("The job analysis service is temporarily unavailable. Please try again shortly.") from exc
+        raise GeminiServiceUnavailableError(
+            "The AI job analysis service is temporarily unavailable. Please try again shortly."
+        ) from exc
     except Exception as exc:
-        raise ValueError("The job analysis service is temporarily unavailable. Please try again shortly.") from exc
+        raise GeminiServiceUnavailableError(
+            "The AI job analysis service is temporarily unavailable. Please try again shortly."
+        ) from exc
 
 # --- 3. MULTI-PLATFORM DISCOVERY SOURCES ---
 
@@ -471,7 +479,8 @@ async def run_scout_discovery(
         existing_hashes.add(d_hash)
         existing_urls.add(norm_url)
 
-        evaluation = score_job_with_gemini(
+        evaluation = await asyncio.to_thread(
+            score_job_with_gemini,
             company=co_name,
             role_title=r_title,
             jd_text=cand["raw_jd_text"],
@@ -555,7 +564,8 @@ async def paste_and_ingest_job(
     norm_url = normalize_job_url(external_url) if external_url else ""
     jd_content = raw_jd_text.strip() if (raw_jd_text and raw_jd_text.strip()) else await fetch_job_page_text(norm_url)
 
-    evaluation = score_job_with_gemini(
+    evaluation = await asyncio.to_thread(
+        score_job_with_gemini,
         company=company_name or "AUTO_DETECT",
         role_title=role_title or "AUTO_DETECT",
         jd_text=jd_content,

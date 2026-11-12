@@ -45,6 +45,7 @@ Use Python and pip. From this directory:
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
+python -m playwright install chromium
 ```
 
 Create `backend/.env` with:
@@ -106,7 +107,7 @@ Use the same client ID for backend `GOOGLE_CLIENT_ID` and frontend `NEXT_PUBLIC_
 Configure the Render web service with:
 
 - **Root directory:** `backend`
-- **Build command:** `pip install -r requirements.txt`
+- **Build command:** `pip install -r requirements.txt && python -m playwright install chromium`
 - **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
 - **Health check path:** `/health`
 

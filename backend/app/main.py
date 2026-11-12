@@ -1,3 +1,4 @@
+import logging
 import os
 import uuid
 from typing import List, Optional, Dict
@@ -37,6 +38,7 @@ from app.services.scout_service import (
     get_recent_activity_stream,
     get_applied_jobs_grouped_by_day,
     GeminiQuotaExceededError,
+    GeminiServiceUnavailableError,
 )
 from app.services.tailor_service import (
     tailor_and_stage_job,
@@ -56,6 +58,8 @@ from app.services.inbox_service import (
     list_email_events,
 )
 from app.services.state_machine import transition_job_state
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Verdant — Autonomous Job Agent API", version="1.0.0")
 
@@ -345,6 +349,15 @@ async def trigger_scout_run(
             user_id=uid,
         )
         raise HTTPException(status_code=429, detail=str(e)) from e
+    except GeminiServiceUnavailableError as e:
+        log_agent_step(
+            "AI service unavailable",
+            str(e),
+            phase="SCOUT",
+            status="error",
+            user_id=uid,
+        )
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 @app.post("/api/scout/paste-job")
 async def paste_any_job_to_apply(
@@ -413,6 +426,16 @@ async def paste_any_job_to_apply(
             user_id=uid,
         )
         raise HTTPException(status_code=429, detail=str(e)) from e
+    except GeminiServiceUnavailableError as e:
+        log_agent_step(
+            "AI service unavailable",
+            str(e),
+            phase=phase,
+            job_id=job_id,
+            status="error",
+            user_id=uid,
+        )
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         log_agent_step(
             "Job processing failed",
@@ -424,6 +447,7 @@ async def paste_any_job_to_apply(
         )
         raise HTTPException(status_code=400, detail=str(e))
     except Exception:
+        logger.exception("Unexpected error while processing pasted job %s", job_id)
         log_agent_step(
             "Job processing failed",
             "The backend encountered an unexpected error. Check the backend logs for details.",
@@ -432,7 +456,10 @@ async def paste_any_job_to_apply(
             status="error",
             user_id=uid,
         )
-        raise
+        raise HTTPException(
+            status_code=502,
+            detail="The job service encountered an unexpected error. Please try again shortly.",
+        )
 
 @app.get("/api/jobs")
 def get_jobs(
@@ -487,6 +514,15 @@ async def trigger_batch_tailor(
             user_id=uid,
         )
         raise HTTPException(status_code=429, detail=str(e)) from e
+    except GeminiServiceUnavailableError as e:
+        log_agent_step(
+            "AI service unavailable",
+            str(e),
+            phase="TAILOR",
+            status="error",
+            user_id=uid,
+        )
+        raise HTTPException(status_code=503, detail=str(e)) from e
 
 @app.post("/api/tailor/{job_id}")
 async def trigger_single_job_tailor(
@@ -497,6 +533,8 @@ async def trigger_single_job_tailor(
         return await tailor_and_stage_job(job_id, user_id=current_user["user_id"])
     except GeminiQuotaExceededError as e:
         raise HTTPException(status_code=429, detail=str(e)) from e
+    except GeminiServiceUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -526,6 +564,8 @@ async def customize_tailored_package(
         )
     except GeminiQuotaExceededError as e:
         raise HTTPException(status_code=429, detail=str(e)) from e
+    except GeminiServiceUnavailableError as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 

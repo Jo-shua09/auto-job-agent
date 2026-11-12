@@ -1,3 +1,5 @@
+import asyncio
+import logging
 import os
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
@@ -16,9 +18,11 @@ from app.models.schemas import (
     JobStatus,
 )
 from app.services.profile_service import get_master_profile, clean_no_em_dash, has_verified_profile_content
-from app.services.scout_service import GeminiQuotaExceededError
+from app.services.scout_service import GeminiQuotaExceededError, GeminiServiceUnavailableError
 from app.services.pdf_compiler import compile_tailored_cv_pdf
 from app.services.state_machine import transition_job_state
+
+logger = logging.getLogger(__name__)
 
 # --- STRUCTURED LLM OUTPUT SCHEMAS FOR WRITER & CRITIC ---
 
@@ -115,13 +119,19 @@ def run_writer_agent(
                 temperature=0.15,
             ),
         )
+        return WriterDraftOutput.model_validate_json(response.text)
     except ClientError as error:
         if error.code == 429:
             raise GeminiQuotaExceededError(
                 "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
             ) from error
-        raise
-    return WriterDraftOutput.model_validate_json(response.text)
+        raise GeminiServiceUnavailableError(
+            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+        ) from error
+    except Exception as error:
+        raise GeminiServiceUnavailableError(
+            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+        ) from error
 
 # --- 2. CRITIC AGENT (p4_2) ---
 
@@ -329,18 +339,24 @@ async def tailor_and_stage_job(
 
     try:
         # Pass 1: Writer + Critic
-        draft = run_writer_agent(job, writer_profile, tailoring_instructions=tailoring_instructions)
-        audit = run_critic_agent(job, writer_profile, draft)
+        draft = await asyncio.to_thread(
+            run_writer_agent,
+            job,
+            writer_profile,
+            tailoring_instructions=tailoring_instructions,
+        )
+        audit = await asyncio.to_thread(run_critic_agent, job, writer_profile, draft)
 
         # Pass 2: Automatic Self-Correction Loop if Critic score < 85 or hallucination/dash flagged
         if audit.critic_score < 85 or not audit.passed_hallucination_check or audit.has_ambiguous_fluff_or_dashes:
-            draft = run_writer_agent(
+            draft = await asyncio.to_thread(
+                run_writer_agent,
                 job,
                 writer_profile,
                 critic_feedback=audit.critic_feedback,
                 tailoring_instructions=tailoring_instructions,
             )
-            audit = run_critic_agent(job, writer_profile, draft)
+            audit = await asyncio.to_thread(run_critic_agent, job, writer_profile, draft)
 
         package = merge_draft_with_verified_vault(
             profile,
@@ -352,12 +368,16 @@ async def tailor_and_stage_job(
             tailoring_instructions=tailoring_instructions,
         )
 
-        pdf_url = await compile_tailored_cv_pdf(
-            profile=profile,
-            package=package,
-            target_role_title=package.target_role_headline,
-            filename_job_title=job.role_title,
-        )
+        try:
+            pdf_url = await compile_tailored_cv_pdf(
+                profile=profile,
+                package=package,
+                target_role_title=package.target_role_headline,
+                filename_job_title=job.role_title,
+            )
+        except Exception:
+            logger.exception("PDF compilation failed for job %s; saving the tailored package without a PDF.", job_id)
+            pdf_url = None
         package.cv_pdf_url = pdf_url
 
         package_payload = clean_no_em_dash(package.model_dump(mode="json"))

@@ -1,10 +1,13 @@
 import sys
 import asyncio
+import logging
 import re
 from html import escape
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 from app.models.schemas import MasterProfile, TailoredPackage
+
+logger = logging.getLogger(__name__)
 
 GENERATED_PDF_DIR = Path(__file__).resolve().parent.parent.parent / "generated_pdfs"
 GENERATED_PDF_DIR.mkdir(parents=True, exist_ok=True)
@@ -67,17 +70,16 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
 <head>
 <meta charset="UTF-8" />
 <style>
-  @import url('https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap');
   * {{ box-sizing: border-box; margin: 0; padding: 0; }}
   body {{
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Helvetica Neue', Arial, sans-serif;
     font-size: 9.5pt;
     line-height: 1.42;
     color: #111827;
     padding: 0.45in 0.5in;
   }}
   h1 {{
-    font-family: 'Bricolage+Grotesque', sans-serif;
+    font-family: Arial, sans-serif;
     font-size: 20pt;
     font-weight: 700;
     color: #090d16;
@@ -95,7 +97,7 @@ def build_ats_cv_html(profile: MasterProfile, package: TailoredPackage, target_r
     margin-bottom: 10px;
   }}
   h2 {{
-    font-family: 'Bricolage Grotesque', sans-serif;
+    font-family: Arial, sans-serif;
     font-size: 10.5pt;
     font-weight: 700;
     text-transform: uppercase;
@@ -154,16 +156,182 @@ def _render_pdf_sync(html_content: str, output_path: str) -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        page = browser.new_page()
-        page.set_content(html_content, wait_until="networkidle")
-        page.pdf(
-            path=output_path,
-            format="A4",
-            print_background=True,
-            margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
+        browser = p.chromium.launch(
+            headless=True,
+            args=["--no-sandbox", "--disable-dev-shm-usage"],
         )
-        browser.close()
+        try:
+            page = browser.new_page()
+            page.set_content(html_content, wait_until="load", timeout=15000)
+            page.pdf(
+                path=output_path,
+                format="A4",
+                print_background=True,
+                margin={"top": "0in", "bottom": "0in", "left": "0in", "right": "0in"},
+            )
+        finally:
+            browser.close()
+
+
+def _render_pdf_with_reportlab_sync(
+    profile: MasterProfile,
+    package: TailoredPackage,
+    target_role_title: str,
+    output_path: str,
+) -> None:
+    """Pure-Python fallback used when Chromium is unavailable on the host."""
+    from reportlab.lib.enums import TA_LEFT
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+
+    document = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        leftMargin=0.5 * inch,
+        rightMargin=0.5 * inch,
+        topMargin=0.45 * inch,
+        bottomMargin=0.45 * inch,
+    )
+    base_styles = getSampleStyleSheet()
+    name_style = ParagraphStyle(
+        "CandidateName",
+        parent=base_styles["Title"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        alignment=TA_LEFT,
+        spaceAfter=2,
+    )
+    role_style = ParagraphStyle(
+        "TargetRole",
+        parent=base_styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=10.5,
+        leading=13,
+        textColor="#2563eb",
+        spaceAfter=3,
+    )
+    contact_style = ParagraphStyle(
+        "Contact",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=11,
+        spaceAfter=8,
+    )
+    heading_style = ParagraphStyle(
+        "SectionHeading",
+        parent=base_styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=10.5,
+        leading=13,
+        spaceBefore=8,
+        spaceAfter=4,
+        textColor="#111827",
+    )
+    body_style = ParagraphStyle(
+        "BodyText",
+        parent=base_styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9.2,
+        leading=12.5,
+        spaceAfter=3,
+    )
+    meta_style = ParagraphStyle(
+        "MetaText",
+        parent=body_style,
+        fontSize=8.5,
+        textColor="#4b5563",
+        spaceAfter=2,
+    )
+    bullet_style = ParagraphStyle(
+        "BulletText",
+        parent=body_style,
+        leftIndent=12,
+        bulletIndent=4,
+        spaceAfter=1,
+    )
+
+    story = [Paragraph(escape(profile.full_name or "Candidate"), name_style)]
+    if target_role_title:
+        story.append(Paragraph(escape(target_role_title), role_style))
+    contact_details = " | ".join(
+        escape(value)
+        for value in (
+            profile.location,
+            profile.email,
+            profile.phone,
+            profile.github_url,
+            profile.portfolio_url,
+            profile.linkedin_url,
+        )
+        if value
+    )
+    if contact_details:
+        story.append(Paragraph(contact_details, contact_style))
+
+    story.append(Paragraph("Professional Summary", heading_style))
+    story.append(Paragraph(escape(package.tailored_summary), body_style))
+
+    if profile.skills_by_category:
+        story.append(Paragraph("Technical Skills", heading_style))
+        for category, skills in profile.skills_by_category.items():
+            story.append(
+                Paragraph(
+                    f"<b>{escape(category)}:</b> {escape(', '.join(skills))}",
+                    body_style,
+                )
+            )
+
+    if package.selected_experiences:
+        story.append(Paragraph("Professional Experience", heading_style))
+        for experience in package.selected_experiences:
+            story.append(
+                Paragraph(
+                    f"<b>{escape(experience.role_title)} - {escape(experience.company)}</b>",
+                    body_style,
+                )
+            )
+            story.append(
+                Paragraph(
+                    f"{escape(experience.start_date)} - {escape(experience.end_date)} | {escape(experience.location)}",
+                    meta_style,
+                )
+            )
+            for bullet in experience.verified_bullets:
+                story.append(Paragraph(escape(bullet), bullet_style, bulletText="•"))
+            story.append(Spacer(1, 4))
+
+    if package.selected_projects:
+        story.append(Paragraph("Featured Engineering & AI Projects", heading_style))
+        for project in package.selected_projects:
+            story.append(Paragraph(f"<b>{escape(project.name)}</b>", body_style))
+            if project.tech_stack:
+                story.append(Paragraph(escape(", ".join(project.tech_stack)), meta_style))
+            for bullet in project.verified_bullets:
+                story.append(Paragraph(escape(bullet), bullet_style, bulletText="•"))
+            story.append(Spacer(1, 4))
+
+    if profile.education:
+        story.append(Paragraph("Education", heading_style))
+        for education in profile.education:
+            story.append(
+                Paragraph(
+                    f"<b>{escape(education.degree)} - {escape(education.institution)}</b>",
+                    body_style,
+                )
+            )
+            story.append(
+                Paragraph(
+                    f"{escape(education.dates)} | {escape(education.location)}",
+                    meta_style,
+                )
+            )
+
+    document.build(story)
+
 
 async def compile_tailored_cv_pdf(
     profile: MasterProfile,
@@ -178,5 +346,15 @@ async def compile_tailored_cv_pdf(
     pdf_filename = f"{user_name}_{job_name}_CV.pdf"
     local_pdf_path = GENERATED_PDF_DIR / pdf_filename
 
-    await asyncio.to_thread(_render_pdf_sync, html_content, str(local_pdf_path))
+    try:
+        await asyncio.to_thread(_render_pdf_sync, html_content, str(local_pdf_path))
+    except Exception:
+        logger.exception("Chromium PDF rendering failed; using the ReportLab fallback.")
+        await asyncio.to_thread(
+            _render_pdf_with_reportlab_sync,
+            profile,
+            package,
+            target_role_title,
+            str(local_pdf_path),
+        )
     return f"/pdfs/{pdf_filename}"
