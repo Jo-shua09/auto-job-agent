@@ -116,7 +116,7 @@ def update_target_roles(
 def update_daily_apply_limit(new_limit: int, user_id: str | None = None) -> dict:
     """Updates the maximum number of jobs the agent can apply to per day (default: 10)."""
     if new_limit < 1 or new_limit > 200:
-        raise ValueError("daily_apply_limit must be between 1 and 200.")
+        raise ValueError("Please choose a daily application limit between 1 and 200.")
     user_ref = get_user_ref(user_id)
     current = ScoutPreferences.model_validate(get_scout_preferences(user_id))
     current.daily_apply_limit = new_limit
@@ -250,11 +250,11 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     raw_text = "\n".join(page.extract_text() or "" for page in reader.pages)
 
     if not raw_text.strip():
-        raise ValueError("Could not extract readable text from the uploaded PDF.")
+        raise ValueError("We couldn't read text from that PDF. Try a text-based CV PDF or add your details manually.")
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
-        raise ValueError("Please set a valid GEMINI_API_KEY in backend/.env to parse uploaded PDFs.")
+        raise ValueError("CV import isn't available right now. You can add your details manually.")
 
     client = create_gemini_client(api_key)
     prompt = f"""
@@ -287,12 +287,12 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     )
 
     if not response.text:
-        raise ValueError("The CV parser returned an empty response. Please try uploading the PDF again.")
+        raise ValueError("We couldn't extract details from this CV right now. Please try again or add them manually.")
 
     try:
         response_payload = json.loads(response.text)
     except json.JSONDecodeError as error:
-        raise ValueError("The CV parser returned invalid JSON. Please try uploading the PDF again.") from error
+        raise ValueError("We couldn't extract details from this CV right now. Please try again or add them manually.") from error
 
     parsed_profile = MasterProfile.model_validate(_normalize_cv_profile_payload(response_payload))
     user_ref = get_user_ref(user_id)

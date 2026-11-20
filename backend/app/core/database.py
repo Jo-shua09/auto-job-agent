@@ -70,7 +70,7 @@ class CollectionReference:
 
     def where(self, field: str, operator: str, value: Any) -> "CollectionReference":
         if operator != "==":
-            raise ValueError(f"Unsupported MongoDB query operator: {operator}")
+            raise ValueError("We couldn't complete that request. Please try again.")
         return CollectionReference(
             self.collection_name,
             self.owner_id,
@@ -139,7 +139,7 @@ class DocumentReference:
             updates["user_id"] = self.owner_id
         result = db[self.collection_name].update_one(self._query(), {"$set": updates})
         if result.matched_count == 0:
-            raise ValueError(f"Document {self.id} does not exist.")
+            raise ValueError("We couldn't find what you're looking for. Please refresh and try again.")
 
     def collection(self, collection_name: str) -> CollectionReference:
         return CollectionReference(collection_name, owner_id=self.id)
@@ -153,5 +153,5 @@ class DocumentReference:
 
 def get_user_ref(user_id: str) -> DocumentReference:
     if not user_id:
-        raise RuntimeError("A signed-in Verdant user is required.")
+        raise RuntimeError("Please sign in to continue.")
     return DocumentReference("users", user_id)

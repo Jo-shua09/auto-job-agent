@@ -51,10 +51,10 @@ _active_runs_lock = threading.Lock()
 
 def _start_application_run(user_id: Optional[str]) -> ActiveApplicationRun:
     if not user_id:
-        raise ValueError("A user account is required to start an application.")
+        raise ValueError("Please sign in to continue.")
     with _active_runs_lock:
         if user_id in _active_runs:
-            raise ValueError("An application run is already active. Stop it or wait for it to finish.")
+            raise ValueError("An application is already in progress. Please wait for it to finish or stop it.")
         run = ActiveApplicationRun()
         _active_runs[user_id] = run
         return run
@@ -70,7 +70,7 @@ def _finish_application_run(user_id: Optional[str], run: ActiveApplicationRun) -
 
 def get_application_run_status(user_id: Optional[str]) -> dict:
     if not user_id:
-        raise ValueError("A user account is required.")
+        raise ValueError("Please sign in to continue.")
     with _active_runs_lock:
         run = _active_runs.get(user_id)
         if run is None:
@@ -84,7 +84,7 @@ def get_application_run_status(user_id: Optional[str]) -> dict:
 
 def request_application_stop(user_id: Optional[str]) -> dict:
     if not user_id:
-        raise ValueError("A user account is required.")
+        raise ValueError("Please sign in to continue.")
     with _active_runs_lock:
         run = _active_runs.get(user_id)
         if run is None:
@@ -428,7 +428,7 @@ def _fail_application(job_id: str, user_id: Optional[str], friendly_message: str
         job_id,
         state="ERROR",
         step_message=friendly_message,
-        error_message=technical_message,
+        error_message=friendly_message,
         user_id=user_id,
     )
     log_agent_step(
@@ -443,7 +443,6 @@ def _fail_application(job_id: str, user_id: Optional[str], friendly_message: str
         "status": "FAILED_NEEDS_MANUAL",
         "job_id": job_id,
         "message": friendly_message,
-        "error": technical_message,
     }
 
 def _send_email_application_sync(
@@ -483,8 +482,8 @@ def _send_email_application_sync(
         return _fail_application(
             job_id,
             user_id,
-            "Email sending isn't set up yet, so nothing was sent. Save your Gmail address and 16-character App Password in Settings, or configure GMAIL_ADDRESS and GMAIL_APP_PASSWORD in backend .env.",
-            "Missing Gmail address or Gmail app password",
+            "Email sending isn't set up yet, so nothing was sent. Save your Gmail address and 16-character App Password in Settings.",
+            "Missing Gmail credentials",
         )
 
     if not pdf_file_path.exists():
@@ -529,12 +528,12 @@ def _send_email_application_sync(
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=20) as smtp:
             smtp.login(gmail_user, app_password)
             smtp.send_message(message)
-    except Exception as exc:
+    except Exception:
         return _fail_application(
             job_id,
             user_id,
             "We couldn't email your application. Nothing was sent. Please try again.",
-            f"SMTP failure: {exc}",
+            "Email send failed",
         )
 
     transition_job_state(job_id, JobStatus.APPLIED, user_id)
@@ -567,7 +566,7 @@ def _execute_playwright_application_sync(
     stop_event: Optional[threading.Event] = None,
 ) -> dict:
     if stop_event is None:
-        raise ValueError("An application run control is required.")
+        raise ValueError("We couldn't start this application right now. Please try again.")
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
@@ -692,11 +691,11 @@ def _execute_playwright_application_sync(
                         state="ERROR",
                         step_message="We didn't get the security code in time. You can try this application again whenever you're ready.",
                         otp_required=False,
-                        error_message="OTP timeout after 300 seconds",
+                        error_message="We didn't get the security code in time. You can try this application again whenever you're ready.",
                         user_id=user_id,
                     )
                     browser.close()
-                    return {"status": "failed_otp_timeout", "job_id": job_id}
+                    return {"status": "failed_otp_timeout", "job_id": job_id, "message": "We didn't get the security code in time. You can try this application again whenever you're ready."}
 
                 # Resume execution with the user's OTP!
                 _raise_if_stop_requested(stop_event)
@@ -755,7 +754,7 @@ def _execute_playwright_application_sync(
                 state="STOPPED",
                 step_message="Stopped at your request. Check the employer's application page before retrying; a submission already sent cannot be recalled.",
                 otp_required=False,
-                error_message="Application stopped by the user; submission status may require manual verification.",
+                error_message="Stopped at your request. Check the employer's application page before retrying.",
                 user_id=user_id,
             )
             log_agent_step(
@@ -769,20 +768,21 @@ def _execute_playwright_application_sync(
             browser.close()
             return {"status": "STOPPED_NEEDS_REVIEW", "job_id": job_id}
 
-        except Exception as e:
+        except Exception:
             err_shot_name = f"error_{job_id}.png"
             try:
                 page.screenshot(path=str(SCREENSHOT_DIR / err_shot_name))
             except Exception:
                 pass
+            friendly_message = f"We hit a problem on {job.company_name}'s application form. Your progress is saved; you can try again."
             transition_job_state(job_id, JobStatus.FAILED_NEEDS_MANUAL, user_id)
             update_execution_log(
                 job_id,
                 state="ERROR",
-                step_message=f"We hit a problem on {job.company_name}'s application form. Your progress is saved; you can try again.",
+                step_message=friendly_message,
                 otp_required=False,
                 screenshot_url=f"/pdfs/screenshots/{err_shot_name}",
-                error_message=str(e)[:300],
+                error_message=friendly_message,
                 user_id=user_id,
             )
             log_agent_step(
@@ -794,7 +794,7 @@ def _execute_playwright_application_sync(
                 user_id=user_id,
             )
             browser.close()
-            return {"status": "FAILED_NEEDS_MANUAL", "job_id": job_id, "error": str(e)}
+            return {"status": "FAILED_NEEDS_MANUAL", "job_id": job_id, "message": friendly_message}
 
 # --- 5. ASYNC API ORCHESTRATORS ---
 
@@ -815,14 +815,13 @@ async def _execute_job_application_with_run(
     quota = get_daily_quota_status(user_id)
     if not quota["can_apply_more_today"]:
         raise ValueError(
-            f"Daily application limit reached ({quota['applied_today']}/{quota['daily_apply_limit']}). "
-            "Increase your daily_apply_limit or wait until tomorrow."
+            f"You've reached today's application limit of {quota['daily_apply_limit']}. You can increase it in Settings or try again tomorrow."
         )
 
     user_ref = get_user_ref(user_id)
     job_snap = user_ref.collection("jobs").document(job_id).get()
     if not job_snap.exists:
-        raise ValueError(f"Job {job_id} not found.")
+        raise ValueError("We couldn't find this job. Please refresh and try again.")
 
     job = JobRecord.model_validate(job_snap.to_dict())
     profile = MasterProfile.model_validate(get_master_profile(user_id))
@@ -862,7 +861,7 @@ async def _execute_job_application_with_run(
         current_status = JobStatus.APPLYING_QUEUED
 
     if current_status != JobStatus.APPLYING_QUEUED:
-        raise ValueError(f"Job is not ready to apply in its current state: {current_status.value}")
+        raise ValueError("This application isn't ready to be sent right now. Please review it and try again.")
 
     if run.stop_event.is_set():
         return {"status": "STOPPED_BEFORE_START", "job_id": job_id}

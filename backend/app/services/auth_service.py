@@ -26,7 +26,7 @@ def _jwt_secret() -> str:
     if len(secret) < 32:
         raise HTTPException(
             status_code=503,
-            detail="Authentication is not configured. Set AUTH_JWT_SECRET to a random value of at least 32 characters.",
+            detail="Sign-in is temporarily unavailable. Please try again later.",
         )
     return secret
 
@@ -148,7 +148,7 @@ def login_google_user(credential: str) -> dict:
     if not client_id:
         raise HTTPException(
             status_code=503,
-            detail="Google sign-in is not configured. Set GOOGLE_CLIENT_ID on the backend.",
+            detail="Google sign-in isn't available right now. Please try another sign-in option.",
         )
     try:
         claims = id_token.verify_oauth2_token(credential, Request(), audience=client_id)
@@ -197,7 +197,7 @@ def login_google_user(credential: str) -> dict:
 
 async def get_current_user(authorization: str | None = Header(default=None)) -> dict:
     if not authorization or not authorization.startswith("Bearer "):
-        raise HTTPException(status_code=401, detail="A Verdant bearer token is required.")
+        raise HTTPException(status_code=401, detail="Please sign in to continue.")
     token = authorization.removeprefix("Bearer ").strip()
     try:
         claims = jwt.decode(
@@ -208,11 +208,11 @@ async def get_current_user(authorization: str | None = Header(default=None)) -> 
             options={"require": ["exp", "iat", "sub", "iss"]},
         )
     except jwt.ExpiredSignatureError as error:
-        raise HTTPException(status_code=401, detail="Your session has expired. Sign in again.") from error
+        raise HTTPException(status_code=401, detail="Your session has expired. Please sign in again.") from error
     except jwt.InvalidTokenError as error:
-        raise HTTPException(status_code=401, detail="Your session is invalid. Sign in again.") from error
+        raise HTTPException(status_code=401, detail="We couldn't verify your session. Please sign in again.") from error
 
     user = db.users.find_one({"_id": claims["sub"]})
     if not user:
-        raise HTTPException(status_code=401, detail="This account is no longer available.")
+        raise HTTPException(status_code=401, detail="We couldn't find your account. Please sign in again.")
     return _public_user(user)

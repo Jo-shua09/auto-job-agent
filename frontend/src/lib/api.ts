@@ -30,7 +30,11 @@ async function getErrorMessage(response: Response): Promise<string> {
   }
 
   if (response.status >= 500) return "A service we use is taking a break. Please try again in a moment.";
-  if (typeof detail === "string" && detail.trim() && !/(traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
+  if (
+    typeof detail === "string" &&
+    detail.trim() &&
+    !/(traceback|exception|api key|environment variable|stack trace|internal server|auth\/|mongodb|firestore|smtp failure|\.env|gemini_api_key)/i.test(detail)
+  ) {
     return detail;
   }
   if (Array.isArray(detail)) {

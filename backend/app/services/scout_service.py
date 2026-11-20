@@ -186,7 +186,7 @@ def score_job_with_gemini(
     provided_role = "" if role_title == "AUTO_DETECT" else role_title
     active_roles = [r.title for r in prefs.target_roles if r.active]
     if not active_roles:
-        raise ValueError("Configure at least one active target role before scoring jobs.")
+        raise ValueError("Add at least one target role in your search preferences to continue.")
     all_skills = [skill for skills in profile.skills_by_category.values() for skill in skills]
 
     jd_lower = jd_text.lower()
@@ -206,7 +206,7 @@ def score_job_with_gemini(
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
         raise GeminiServiceUnavailableError(
-            "Set GEMINI_API_KEY to analyze and score discovered jobs against your real profile. The agent does not fabricate job matches or applications."
+            "Job matching isn't available right now. Please try again later."
         )
 
     client = create_gemini_client(api_key)
@@ -255,27 +255,27 @@ def score_job_with_gemini(
         except ClientError as exc:
             if exc.code == 429:
                 raise GeminiQuotaExceededError(
-                    "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+                    "You've used today's AI allowance for job matching. Your work is saved. Please try again tomorrow."
                 ) from exc
             if exc.code >= 500 and attempt < attempts - 1:
                 time.sleep(min(2 ** (attempt + 1), 8))
                 continue
             raise GeminiServiceUnavailableError(
-                "The AI job analysis service is temporarily unavailable. Please try again shortly."
+                "We couldn't analyze jobs right now. Please try again in a moment."
             ) from exc
         except ServerError:
             if attempt < attempts - 1:
                 time.sleep(min(2 ** (attempt + 1), 8))
                 continue
             raise GeminiServiceUnavailableError(
-                "The AI job analysis service is temporarily unavailable. Please try again shortly."
+                "We couldn't analyze jobs right now. Please try again in a moment."
             )
         except Exception:
             if attempt < attempts - 1:
                 time.sleep(min(2 ** (attempt + 1), 8))
                 continue
             raise GeminiServiceUnavailableError(
-                "The AI job analysis service is temporarily unavailable. Please try again shortly."
+                "We couldn't analyze jobs right now. Please try again in a moment."
             )
 
 # --- 3. MULTI-PLATFORM DISCOVERY SOURCES ---
@@ -465,7 +465,7 @@ async def run_scout_discovery(
         else [r.title for r in prefs.target_roles if r.active]
     )
     if not active_role_titles:
-        raise ValueError("Configure at least one active target role before running the Scout.")
+        raise ValueError("Add at least one target role in your search preferences before looking for jobs.")
 
     jobs_col = user_ref.collection("jobs")
     existing_hashes = set()
@@ -586,7 +586,7 @@ async def paste_and_ingest_job(
     checks your Daily Application Limit (default 10), and queues it for tailoring & auto-application.
     """
     if not external_url and not raw_jd_text:
-        raise ValueError("Provide either external_url or raw_jd_text (or both).")
+        raise ValueError("Add a job link or paste the job description to continue.")
 
     user_ref = get_user_ref(user_id)
     profile = MasterProfile.model_validate(get_master_profile(user_id))
@@ -608,7 +608,7 @@ async def paste_and_ingest_job(
     final_company_value = company_name or evaluation.extracted_company_name
     final_role_value = role_title or evaluation.extracted_role_title
     if not final_company_value or not final_role_value:
-        raise ValueError("The company and role could not be identified. Add them explicitly or configure the job analysis service.")
+        raise ValueError("We couldn't identify the company or role from this job. Try adding them or include more job details.")
     final_company = clean_no_em_dash(final_company_value)
     final_role = clean_no_em_dash(final_role_value)
     d_hash = compute_dedup_hash(final_company, final_role)

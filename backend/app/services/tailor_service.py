@@ -101,7 +101,7 @@ def run_writer_agent(
     api_key = os.getenv("GEMINI_API_KEY")
 
     if not api_key or api_key == "your_gemini_api_key_here":
-        raise ValueError("Set GEMINI_API_KEY before tailoring applications. No generated profile content will be substituted.")
+        raise ValueError("Tailoring isn't available right now. Please try again later.")
 
     client = create_gemini_client(api_key)
     revision_clause = (
@@ -142,16 +142,16 @@ def run_writer_agent(
     except ClientError as error:
         if error.code == 429:
             raise GeminiQuotaExceededError(
-                "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+                "You've used today's AI allowance for tailoring. Your work is saved. Please try again tomorrow."
             ) from error
         logger.exception("Gemini writer rejected the tailoring request")
         raise GeminiServiceUnavailableError(
-            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+            "We couldn't tailor this application right now. Please try again in a moment."
         ) from error
     except Exception as error:
         logger.exception("Gemini writer failed: %s", error)
         raise GeminiServiceUnavailableError(
-            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+            "We couldn't tailor this application right now. Please try again in a moment."
         ) from error
 
 # --- 2. CRITIC AGENT (p4_2) ---
@@ -164,7 +164,7 @@ def run_critic_agent(
     """Audits the Writer's output for hallucinations, missing JD keywords, or long dashes."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
-        raise ValueError("Set GEMINI_API_KEY before tailoring applications. No generated audit will be substituted.")
+        raise ValueError("Tailoring isn't available right now. Please try again later.")
 
     client = create_gemini_client(api_key)
     prompt = f"""
@@ -204,16 +204,16 @@ def run_critic_agent(
     except ClientError as e:
         if e.code == 429:
             raise GeminiQuotaExceededError(
-                "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+                "You've used today's AI allowance for tailoring. Your work is saved. Please try again tomorrow."
             ) from e
         logger.exception("Gemini critic rejected the tailoring audit")
         raise GeminiServiceUnavailableError(
-            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+            "We couldn't tailor this application right now. Please try again in a moment."
         ) from e
     except Exception as e:
         logger.exception("Gemini critic failed: %s", e)
         raise GeminiServiceUnavailableError(
-            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+            "We couldn't tailor this application right now. Please try again in a moment."
         ) from e
 
 # --- 3. DETERMINISTIC VAULT MERGER (GROUND-TRUTH LOCK) ---
@@ -305,7 +305,7 @@ async def tailor_and_stage_job(
     job_snap = job_doc_ref.get()
 
     if not job_snap.exists:
-        raise ValueError(f"Job {job_id} not found in Firestore.")
+        raise ValueError("We couldn't find this job. Please refresh and try again.")
 
     job = JobRecord.model_validate(job_snap.to_dict())
     # If the job came from a short Serper search snippet, fetch the full JD page before tailoring
@@ -317,7 +317,7 @@ async def tailor_and_stage_job(
             job_doc_ref.update({"raw_jd_text": full_text})
     profile = MasterProfile.model_validate(get_master_profile(user_id))
     if not profile.is_onboarded or not has_verified_profile_content(profile):
-        raise ValueError("Complete your name, email, and at least one verified experience, project, or skill before tailoring.")
+        raise ValueError("Add your name, email, and at least one verified experience, project, or skill in your Profile Vault before tailoring.")
 
     is_customized = selected_experience_ids is not None or selected_project_ids is not None or bool(tailoring_instructions.strip())
     if is_customized and job.status != JobStatus.AWAITING_APPROVAL:
@@ -325,11 +325,11 @@ async def tailor_and_stage_job(
     if selected_experience_ids is not None:
         unknown_ids = set(selected_experience_ids) - {item.id for item in profile.experiences}
         if unknown_ids:
-            raise ValueError("One or more selected experiences are not in your Master Vault.")
+            raise ValueError("One or more selected experiences aren't in your Profile Vault.")
     if selected_project_ids is not None:
         unknown_ids = set(selected_project_ids) - {item.id for item in profile.projects}
         if unknown_ids:
-            raise ValueError("One or more selected projects are not in your Master Vault.")
+            raise ValueError("One or more selected projects aren't in your Profile Vault.")
     if is_customized and not (selected_experience_ids or selected_project_ids):
         raise ValueError("Select at least one verified experience or project for the CV.")
 
@@ -450,5 +450,5 @@ def get_tailored_package(job_id: str, user_id: Optional[str] = None) -> dict:
     user_ref = get_user_ref(user_id)
     snap = user_ref.collection("tailored_packages").document(job_id).get()
     if not snap.exists:
-        raise ValueError(f"No tailored package found for job {job_id}.")
+        raise ValueError("We couldn't find a tailored version for this job yet.")
     return snap.to_dict()

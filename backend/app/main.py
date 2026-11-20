@@ -140,21 +140,24 @@ def auth_register_email(req: EmailPasswordAuthRequest):
     try:
         return register_email_user(req.email, req.password, req.full_name)
     except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+        message = str(error)
+        if "daily_apply_limit must be between 1 and 200" in message:
+            message = "Choose a daily limit between 1 and 200."
+        raise HTTPException(status_code=400, detail=message) from error
 
 @app.post("/api/auth/login")
 def auth_login_email(req: EmailPasswordAuthRequest):
     try:
         return login_email_user(req.email, req.password)
     except ValueError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from error
+        raise HTTPException(status_code=401, detail="That email and password combination doesn't match. Please try again.") from error
 
 @app.post("/api/auth/google")
 def auth_google(req: GoogleAuthRequest):
     try:
         return login_google_user(req.credential)
     except ValueError as error:
-        raise HTTPException(status_code=401, detail=str(error)) from error
+        raise HTTPException(status_code=401, detail="We couldn't sign you in with Google. Please try again.") from error
 
 @app.get("/api/auth/me")
 async def auth_current_user(current_user: dict = Depends(get_current_user)):
@@ -247,7 +250,7 @@ async def upload_base_cv(
 ):
     uid = current_user["user_id"]
     if not file.filename.lower().endswith(".pdf"):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported.")
+        raise HTTPException(status_code=400, detail="Please upload a PDF file.")
     log_agent_step(
         "Extracting Uploaded Base CV",
         f"Parsing {file.filename} into your Master Vault with zero hallucinations.",
@@ -556,7 +559,7 @@ def update_tailored_package_fields(
     user_ref = get_user_ref(current_user["user_id"])
     doc_ref = user_ref.collection("tailored_packages").document(job_id)
     if not doc_ref.get().exists:
-        raise HTTPException(status_code=404, detail="Tailored package not found.")
+        raise HTTPException(status_code=404, detail="We couldn't find this tailored application. Please refresh and try again.")
     updates = {}
     if req.cover_letter_text is not None:
         updates["cover_letter_text"] = clean_no_em_dash(req.cover_letter_text)
@@ -576,12 +579,12 @@ def approve_job_for_application(
     if not quota["can_apply_more_today"]:
         raise HTTPException(
             status_code=429,
-            detail=f"Daily application limit reached ({quota['daily_apply_limit']}/{quota['daily_apply_limit']}). Edit your limit or wait until tomorrow.",
+            detail=f"You've reached today's application limit of {quota['daily_apply_limit']}. You can increase your limit in settings or try again tomorrow.",
         )
     try:
         transition = transition_job_state(job_id, JobStatus.APPLYING_QUEUED, uid)
         log_agent_step(
-            f"You approved an application for {job_id}",
+            "Application approved",
             f"We'll submit it for you ({quota['applied_today'] + 1} of {quota['daily_apply_limit']} today).",
             phase="APPLY",
             job_id=job_id,
@@ -589,8 +592,8 @@ def approve_job_for_application(
             user_id=uid,
         )
         return {"status": "approved_and_queued", "transition": transition, "daily_quota": quota}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="This application can't be approved right now. Please refresh and try again.")
 
 @app.post("/api/jobs/{job_id}/skip")
 def skip_job(
@@ -599,8 +602,8 @@ def skip_job(
 ):
     try:
         return transition_job_state(job_id, JobStatus.SKIPPED, current_user["user_id"])
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="This application can't be skipped right now. Please refresh and try again.")
 
 @app.post("/api/jobs/{job_id}/submit-otp")
 def submit_manual_otp_code(

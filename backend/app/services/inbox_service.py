@@ -338,8 +338,12 @@ def poll_gmail_inbox_sync(max_emails: int = 10, user_id: Optional[str] = None) -
 
         mail.logout()
         return {"status": "polled", "matched_events_count": len(processed), "processed_events": processed}
-    except Exception as e:
-        return {"status": "error", "error": str(e), "processed_events": processed}
+    except Exception:
+        return {
+            "status": "error",
+            "error": "We couldn't check your Gmail inbox right now. Please confirm your Gmail connection in Settings and try again.",
+            "processed_events": processed,
+        }
 
 def list_email_events(user_id: Optional[str] = None) -> List[dict]:
     """Returns all classified recruiter email events from Firestore, newest first."""

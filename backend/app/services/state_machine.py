@@ -57,15 +57,13 @@ def transition_job_state(job_id: str, new_status: JobStatus, user_id: str | None
     snap = job_ref.get()
 
     if not snap.exists:
-        raise ValueError(f"Job {job_id} does not exist in Firestore.")
+        raise ValueError("We couldn't find this job. Please refresh and try again.")
 
     data = snap.to_dict()
     current_status = JobStatus(data["status"])
 
     if new_status not in ALLOWED_TRANSITIONS.get(current_status, set()):
-        raise ValueError(
-            f"Illegal state transition for Job {job_id}: {current_status.value} -> {new_status.value}"
-        )
+        raise ValueError("This action isn't available right now. Please refresh and try again.")
 
     update_payload = {
         "status": new_status.value,
