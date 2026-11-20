@@ -1,13 +1,14 @@
 import asyncio
 import logging
 import os
+import time
 from datetime import datetime, timezone
 from typing import List, Dict, Optional
 from pydantic import BaseModel, Field
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 from google.genai import types
 
-from app.core.gemini_client import create_gemini_client
+from app.core.gemini_client import create_gemini_client, get_gemini_model
 from app.core.database import get_user_ref
 from app.models.schemas import (
     MasterProfile,
@@ -23,6 +24,32 @@ from app.services.pdf_compiler import compile_tailored_cv_pdf
 from app.services.state_machine import transition_job_state
 
 logger = logging.getLogger(__name__)
+
+GEMINI_ATTEMPTS = 4
+
+
+def _generate_with_retry(client, prompt: str, temperature: float) -> str:
+    last_error: Exception | None = None
+    for attempt in range(GEMINI_ATTEMPTS):
+        try:
+            response = client.models.generate_content(
+                model=get_gemini_model(),
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=WriterDraftOutput,
+                    temperature=temperature,
+                ),
+            )
+            return response.text
+        except (ServerError, ConnectionError, TimeoutError) as error:
+            last_error = error
+            if attempt + 1 < GEMINI_ATTEMPTS:
+                time.sleep(min(2 ** (attempt + 1), 8))
+                continue
+            raise
+    raise last_error if last_error is not None else RuntimeError("Gemini request did not return a response")
+
 
 # --- STRUCTURED LLM OUTPUT SCHEMAS FOR WRITER & CRITIC ---
 
@@ -110,25 +137,19 @@ def run_writer_agent(
     """
 
     try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=WriterDraftOutput,
-                temperature=0.15,
-            ),
-        )
-        return WriterDraftOutput.model_validate_json(response.text)
+        response_text = _generate_with_retry(client, prompt, 0.15)
+        return WriterDraftOutput.model_validate_json(response_text)
     except ClientError as error:
         if error.code == 429:
             raise GeminiQuotaExceededError(
                 "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
             ) from error
+        logger.exception("Gemini writer rejected the tailoring request")
         raise GeminiServiceUnavailableError(
             "The AI tailoring service is temporarily unavailable. Please try again shortly."
         ) from error
     except Exception as error:
+        logger.exception("Gemini writer failed: %s", error)
         raise GeminiServiceUnavailableError(
             "The AI tailoring service is temporarily unavailable. Please try again shortly."
         ) from error
@@ -143,12 +164,7 @@ def run_critic_agent(
     """Audits the Writer's output for hallucinations, missing JD keywords, or long dashes."""
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
-        return CriticAuditOutput(
-            critic_score=94,
-            passed_hallucination_check=True,
-            has_ambiguous_fluff_or_dashes=False,
-            critic_feedback="Verified deterministic fallback against Master Profile Vault. Zero hallucinations detected.",
-        )
+        raise ValueError("Set GEMINI_API_KEY before tailoring applications. No generated audit will be substituted.")
 
     client = create_gemini_client(api_key)
     prompt = f"""
@@ -174,7 +190,7 @@ def run_critic_agent(
 
     try:
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=get_gemini_model(),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -190,19 +206,15 @@ def run_critic_agent(
             raise GeminiQuotaExceededError(
                 "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
             ) from e
-        return CriticAuditOutput(
-            critic_score=90,
-            passed_hallucination_check=True,
-            has_ambiguous_fluff_or_dashes=False,
-            critic_feedback=f"Audit passed via deterministic ID lock ({str(e)[:60]}).",
-        )
+        logger.exception("Gemini critic rejected the tailoring audit")
+        raise GeminiServiceUnavailableError(
+            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+        ) from e
     except Exception as e:
-        return CriticAuditOutput(
-            critic_score=90,
-            passed_hallucination_check=True,
-            has_ambiguous_fluff_or_dashes=False,
-            critic_feedback=f"Audit passed via deterministic ID lock ({str(e)[:60]}).",
-        )
+        logger.exception("Gemini critic failed: %s", e)
+        raise GeminiServiceUnavailableError(
+            "The AI tailoring service is temporarily unavailable. Please try again shortly."
+        ) from e
 
 # --- 3. DETERMINISTIC VAULT MERGER (GROUND-TRUTH LOCK) ---
 

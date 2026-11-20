@@ -140,6 +140,7 @@ class JobRecord(BaseModel):
     id: str
     user_id: str
     external_url: str
+    application_email: Optional[str] = None
     dedup_hash: str
     company_name: str
     role_title: str

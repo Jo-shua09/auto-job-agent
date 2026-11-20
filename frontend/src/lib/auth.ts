@@ -30,19 +30,20 @@ async function authenticate(path: string, payload: Record<string, string>) {
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("We couldn't connect to your workspace. Check your internet connection and try again.");
+      throw new Error("We can't reach your workspace right now. Check your connection and try again.");
     }
     throw error;
   }
   if (!response.ok) {
-    let message = "We couldn't complete sign-in. Please check your details and try again.";
-    try {
-      const body: unknown = await response.json();
-      if (body && typeof body === "object" && "detail" in body && typeof body.detail === "string") {
-        message = body.detail;
+    let message = "We couldn't sign you in. Please check your details and try again.";
+    const body = await response.json().catch(() => null) as { detail?: unknown } | null;
+    if (body && typeof body.detail === "string") {
+      const detail = body.detail;
+      if (/(google sign-in could not be verified|invalid credentials|token)/i.test(detail)) {
+        message = "We couldn't confirm that sign-in. Please try again.";
+      } else if (!/(traceback|stack trace|exception|api key|environment variable|internal server)/i.test(detail)) {
+        message = detail;
       }
-    } catch {
-      // Keep the generic message when the server does not return JSON.
     }
     throw new Error(message);
   }

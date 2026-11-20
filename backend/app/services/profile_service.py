@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, List
 from pypdf import PdfReader
 from google.genai import types
-from app.core.gemini_client import create_gemini_client
+from app.core.gemini_client import create_gemini_client, get_gemini_model
 from app.core.database import get_user_ref
 from app.models.schemas import (
     MasterProfile,
@@ -84,7 +84,12 @@ def get_scout_preferences(user_id: str | None = None) -> dict:
         return get_default_scout_preferences(user_ref.id).model_dump(mode="json")
     return snap.to_dict()
 
-def update_target_roles(role_titles: List[str], preferred_locations: List[str] | None = None, user_id: str | None = None) -> dict:
+def update_target_roles(
+    role_titles: List[str],
+    preferred_locations: List[str] | None = None,
+    work_modes: List[str] | None = None,
+    user_id: str | None = None,
+) -> dict:
     user_ref = get_user_ref(user_id)
     current = ScoutPreferences.model_validate(get_scout_preferences(user_id))
 
@@ -100,6 +105,8 @@ def update_target_roles(role_titles: List[str], preferred_locations: List[str] |
     current.target_roles = new_roles
     if preferred_locations is not None:
         current.preferred_locations = preferred_locations
+    if work_modes is not None:
+        current.work_modes = work_modes
     current.updated_at = datetime.now(timezone.utc)
 
     payload = current.model_dump(mode="json")
@@ -161,6 +168,63 @@ def get_master_profile(user_id: str | None = None) -> dict:
         return MasterProfile(user_id=user_ref.id).model_dump(mode="json")
     return clean_no_em_dash(snap.to_dict())
 
+
+def get_gmail_integration_config(user_id: str | None = None) -> dict:
+    """Returns the user's stored Gmail integration credentials (internal use only)."""
+    user_ref = get_user_ref(user_id)
+    doc_ref = user_ref.collection("vault").document("integrations")
+    snap = doc_ref.get()
+    data = snap.to_dict() if snap.exists else {}
+    gmail = data.get("gmail", {}) if isinstance(data, dict) else {}
+    if not isinstance(gmail, dict):
+        gmail = {}
+    return {
+        "gmail_address": str(gmail.get("gmail_address") or "").strip(),
+        "gmail_app_password": str(gmail.get("gmail_app_password") or "").strip(),
+    }
+
+
+def get_gmail_integration_public(user_id: str | None = None) -> dict:
+    """Returns Gmail integration status for the UI without exposing the app password."""
+    config = get_gmail_integration_config(user_id)
+    profile = get_master_profile(user_id)
+    profile_email = str(profile.get("email") or "").strip()
+    effective_address = config["gmail_address"] or profile_email
+    has_app_password = bool(config["gmail_app_password"])
+    return {
+        "gmail_address": config["gmail_address"],
+        "effective_gmail_address": effective_address,
+        "has_app_password": has_app_password,
+        "configured": bool(effective_address and has_app_password),
+        "uses_profile_email": bool(not config["gmail_address"] and profile_email),
+    }
+
+
+def save_gmail_integration(
+    user_id: str | None = None,
+    gmail_address: str | None = None,
+    gmail_app_password: str | None = None,
+) -> dict:
+    """Saves per-user Gmail settings. Omitted fields are left unchanged."""
+    user_ref = get_user_ref(user_id)
+    doc_ref = user_ref.collection("vault").document("integrations")
+    snap = doc_ref.get()
+    existing = snap.to_dict() if snap.exists else {}
+    if not isinstance(existing, dict):
+        existing = {}
+    gmail = existing.get("gmail", {})
+    if not isinstance(gmail, dict):
+        gmail = {}
+
+    if gmail_address is not None:
+        gmail["gmail_address"] = clean_no_em_dash(str(gmail_address).strip())
+    if gmail_app_password is not None:
+        gmail["gmail_app_password"] = str(gmail_app_password).replace(" ", "").strip()
+
+    gmail["updated_at"] = datetime.now(timezone.utc).isoformat()
+    doc_ref.set({"gmail": gmail}, merge=True)
+    return get_gmail_integration_public(user_id)
+
 def save_master_profile(profile: MasterProfile, user_id: str | None = None) -> dict:
     user_ref = get_user_ref(user_id)
     profile.user_id = user_ref.id
@@ -214,7 +278,7 @@ def parse_uploaded_cv_into_vault(pdf_bytes: bytes, user_id: str | None = None) -
     """
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=get_gemini_model(),
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",

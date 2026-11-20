@@ -78,8 +78,8 @@ python -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 | `GEMINI_API_KEY` | For AI workflows | Enables CV parsing, job discovery/scoring, tailoring, and supported automation. |
 | `SERPER_API_KEY` | Optional | Enables Serper-backed job search. |
 | `JSEARCH_API_KEY` | Optional | Enables JSearch-backed job search. |
-| `GMAIL_ADDRESS` | Optional | Gmail account used for live inbox polling. |
-| `GMAIL_APP_PASSWORD` | Optional | Gmail app password for the optional IMAP integration. |
+| `GMAIL_ADDRESS` | Optional | Default Gmail account for live inbox polling/email sending. Per-user Gmail settings saved in-app (Settings) take precedence when configured. |
+| `GMAIL_APP_PASSWORD` | Optional | Default Gmail app password for the optional IMAP/email integration. Users can also save their own app password in-app. |
 
 Never commit `.env`, MongoDB URIs, JWT secrets, provider keys, Gmail app passwords, tokens, CVs, or generated personal documents.
 

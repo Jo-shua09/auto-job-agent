@@ -28,6 +28,8 @@ from app.services.profile_service import (
     get_daily_quota_status,
     parse_uploaded_cv_into_vault,
     clean_no_em_dash,
+    get_gmail_integration_public,
+    save_gmail_integration,
 )
 from app.services.pdf_compiler import compile_tailored_cv_pdf, GENERATED_PDF_DIR
 from app.services.scout_service import (
@@ -109,7 +111,7 @@ class PasteAnyJobRequest(BaseModel):
     raw_jd_text: Optional[str] = None
     company_name: Optional[str] = None
     role_title: Optional[str] = None
-    auto_queue_for_apply: bool = True
+    auto_queue_for_apply: bool = False
 
 class UpdateScreeningAnswersRequest(BaseModel):
     cover_letter_text: Optional[str] = None
@@ -129,6 +131,11 @@ class SimulateEmailRequest(BaseModel):
     snippet: str = Field(
         default="Hi, our engineering team reviewed your application and would love to schedule a 30-minute technical intro call this week."
     )
+
+
+class UpdateGmailIntegrationRequest(BaseModel):
+    gmail_address: Optional[str] = None
+    gmail_app_password: Optional[str] = None
 
 
 # --- HEALTH & AUTHENTICATION ENDPOINTS ---
@@ -321,8 +328,8 @@ async def trigger_scout_run(
     uid = current_user["user_id"]
     try:
         log_agent_step(
-            "Scanning Job Platforms & ATS Boards",
-            "Searching across 15+ ATS domains and global feeds for your configured roles...",
+            "Looking for roles that fit you",
+            "Checking jobs across the sites you use for the roles you picked...",
             phase="SCOUT",
             status="active",
             user_id=uid,
@@ -333,8 +340,8 @@ async def trigger_scout_run(
             user_id=uid,
         )
         log_agent_step(
-            f"Found {res['high_match_discovered_count']} Matching Roles",
-            f"Filtered out {res['skipped_duplicates_count']} duplicates and {res['archived_low_or_blocked_count']} low-fit listings.",
+            f"Found {res['high_match_discovered_count']} roles worth a look",
+            f"We skipped {res['skipped_duplicates_count']} duplicates and {res['archived_low_or_blocked_count']} roles that didn't fit.",
             phase="SCOUT",
             status="completed",
             user_id=uid,
@@ -342,8 +349,8 @@ async def trigger_scout_run(
         return res
     except GeminiQuotaExceededError as e:
         log_agent_step(
-            "Gemini quota reached",
-            str(e),
+            "Today's AI allowance is used up",
+            "We've used today's AI allowance. Your saved work is safe. Come back tomorrow or upgrade your plan to keep going.",
             phase="SCOUT",
             status="error",
             user_id=uid,
@@ -351,8 +358,8 @@ async def trigger_scout_run(
         raise HTTPException(status_code=429, detail=str(e)) from e
     except GeminiServiceUnavailableError as e:
         log_agent_step(
-            "AI service unavailable",
-            str(e),
+            "Our AI helper needs a moment",
+            "The AI service is busy right now. Nothing is lost. Please try again in a moment.",
             phase="SCOUT",
             status="error",
             user_id=uid,
@@ -369,8 +376,8 @@ async def paste_any_job_to_apply(
     job_id: Optional[str] = None
     try:
         log_agent_step(
-            "Analyzing Pasted Job Opportunity",
-            "Extracting company details, role requirements, and scoring tech stack alignment...",
+            "Reading the job you shared",
+            "Pulling out the role, requirements and skills so we can match them to your experience...",
             phase="SCOUT",
             status="active",
             user_id=uid,
@@ -386,40 +393,21 @@ async def paste_any_job_to_apply(
         job = ingested["job"]
         job_id = job["id"]
         log_agent_step(
-            f"Job Identified: {job['role_title']} at {job['company_name']}",
-            "Job details extracted. Starting CV tailoring for your review.",
+            f"We found the details for {job['role_title']} at {job['company_name']}",
+            "Got it. Now putting together your application for review.",
             phase="SCOUT",
-            job_id=job_id,
-            status="completed",
-            user_id=uid,
-        )
-        phase = "TAILOR"
-        log_agent_step(
-            f"Tailoring CV & Cover Letter for {job['company_name']}",
-            f"Matching verified projects from your Vault for {job['role_title']}...",
-            phase="TAILOR",
-            job_id=job_id,
-            status="active",
-            user_id=uid,
-        )
-        tailored = await tailor_and_stage_job(job_id, user_id=uid)
-        log_agent_step(
-            f"Ready for Review: {job['role_title']} at {job['company_name']}",
-            f"Critic verified resume ({tailored['critic_score']}/100) and compiled ATS PDF.",
-            phase="TAILOR",
             job_id=job_id,
             status="completed",
             user_id=uid,
         )
         return {
             "ingested_job": job,
-            "tailored_result": tailored,
             "daily_quota": ingested["daily_quota"],
         }
     except GeminiQuotaExceededError as e:
         log_agent_step(
-            "Gemini quota reached",
-            str(e),
+            "Today's AI allowance is used up",
+            "We've used today's AI allowance. Your saved work is safe. Come back tomorrow or upgrade your plan to keep going.",
             phase=phase,
             job_id=job_id,
             status="error",
@@ -428,8 +416,8 @@ async def paste_any_job_to_apply(
         raise HTTPException(status_code=429, detail=str(e)) from e
     except GeminiServiceUnavailableError as e:
         log_agent_step(
-            "AI service unavailable",
-            str(e),
+            "Our AI helper needs a moment",
+            "The AI service is busy right now. Nothing is lost. Please try again in a moment.",
             phase=phase,
             job_id=job_id,
             status="error",
@@ -438,8 +426,8 @@ async def paste_any_job_to_apply(
         raise HTTPException(status_code=503, detail=str(e)) from e
     except ValueError as e:
         log_agent_step(
-            "Job processing failed",
-            str(e),
+            "We hit a snag with this job",
+            "We couldn't finish this step. Your saved work is safe. Please try again.",
             phase=phase,
             job_id=job_id,
             status="error",
@@ -449,8 +437,8 @@ async def paste_any_job_to_apply(
     except Exception:
         logger.exception("Unexpected error while processing pasted job %s", job_id)
         log_agent_step(
-            "Job processing failed",
-            "The backend encountered an unexpected error. Check the backend logs for details.",
+            "We hit a snag with this job",
+            "Something unexpected happened. Your work is safe. Please try again, or contact support if it keeps happening.",
             phase=phase,
             job_id=job_id,
             status="error",
@@ -490,16 +478,16 @@ async def trigger_batch_tailor(
     uid = current_user["user_id"]
     try:
         log_agent_step(
-            f"Batch Tailoring Top {limit} Discovered Jobs",
-            "Running Writer-Critic loop and compiling custom PDFs...",
+            f"Preparing your top {limit} applications",
+            "Putting together tailored CVs and cover letters for your best matches...",
             phase="TAILOR",
             status="active",
             user_id=uid,
         )
         res = await batch_tailor_discovered_jobs(limit=limit, user_id=uid)
         log_agent_step(
-            f"Staged {res['tailored_count']} Tailored Applications in Review Queue",
-            "All PDFs compiled and verified with zero hallucinations.",
+            f"{res['tailored_count']} applications are ready for you to review",
+            "Your tailored CVs are ready. Review them before anything is sent.",
             phase="TAILOR",
             status="completed",
             user_id=uid,
@@ -507,8 +495,8 @@ async def trigger_batch_tailor(
         return res
     except GeminiQuotaExceededError as e:
         log_agent_step(
-            "Gemini quota reached",
-            str(e),
+            "Today's AI allowance is used up",
+            "We've used today's AI allowance. Your saved work is safe. Come back tomorrow or upgrade your plan to keep going.",
             phase="TAILOR",
             status="error",
             user_id=uid,
@@ -516,8 +504,8 @@ async def trigger_batch_tailor(
         raise HTTPException(status_code=429, detail=str(e)) from e
     except GeminiServiceUnavailableError as e:
         log_agent_step(
-            "AI service unavailable",
-            str(e),
+            "Our AI helper needs a moment",
+            "The AI service is busy right now. Nothing is lost. Please try again in a moment.",
             phase="TAILOR",
             status="error",
             user_id=uid,
@@ -603,8 +591,8 @@ def approve_job_for_application(
     try:
         transition = transition_job_state(job_id, JobStatus.APPLYING_QUEUED, uid)
         log_agent_step(
-            f"Approved Job {job_id} for Auto-Application",
-            f"Queued for Playwright submission ({quota['applied_today'] + 1}/{quota['daily_apply_limit']} daily quota).",
+            f"You approved an application for {job_id}",
+            f"We'll submit it for you ({quota['applied_today'] + 1} of {quota['daily_apply_limit']} today).",
             phase="APPLY",
             job_id=job_id,
             status="completed",
@@ -638,14 +626,14 @@ def submit_manual_otp_code(
             "state": "OTP_RECEIVED",
             "otp_required": False,
             "otp_code_input": req.otp_code.strip(),
-            "step_message": "Verification code received from user. Resuming application submission...",
+            "step_message": "Got your code. We'll finish the application now...",
             "updated_at": datetime.now(timezone.utc).isoformat(),
         },
         merge=True,
     )
     log_agent_step(
-        "Verification Code Received",
-        "Entering your OTP code into the application form and completing submission...",
+        "Got your security code",
+        "Adding it to the application form and finishing up for you...",
         phase="OTP",
         job_id=job_id,
         status="active",
@@ -731,6 +719,33 @@ def simulate_incoming_recruiter_email(
 @app.get("/api/inbox/events")
 def read_tracked_email_events(current_user: dict = Depends(get_current_user)):
     return list_email_events(user_id=current_user["user_id"])
+
+
+# --- PER-USER GMAIL INTEGRATION ---
+
+@app.get("/api/integrations/gmail")
+def read_gmail_integration(current_user: dict = Depends(get_current_user)):
+    return get_gmail_integration_public(current_user["user_id"])
+
+
+@app.put("/api/integrations/gmail")
+def update_gmail_integration(
+    req: UpdateGmailIntegrationRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    uid = current_user["user_id"]
+    saved = save_gmail_integration(
+        uid,
+        gmail_address=req.gmail_address,
+        gmail_app_password=req.gmail_app_password,
+    )
+    log_agent_step(
+        "Updated Gmail connection",
+        "Saved your Gmail settings for sending applications and tracking inbox updates.",
+        phase="INBOX",
+        user_id=uid,
+    )
+    return saved
 
 
 app = CORSMiddleware(

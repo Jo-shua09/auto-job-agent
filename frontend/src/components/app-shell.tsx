@@ -30,7 +30,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { BrandMark, BrandName } from "@/components/brand";
-import { OtpBanner } from "@/components/otp-banner";
+import { OtpDialog } from "@/components/otp-banner";
 import { useTheme } from "@/lib/theme";
 import { getAuthToken, logoutUser, onSessionChange } from "@/lib/auth";
 import { cn } from "@/lib/utils";
@@ -95,7 +95,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         }>("/api/apply/control");
         if (active) setApplicationControl(status);
       } catch {
-        if (active) setApiError("We couldn't check the application status. Please retry before starting another application.");
+        if (active) setApiError("We couldn't confirm whether an application is still running. Please try again before starting another one.");
       }
     };
     const refreshWorkspace = async () => {
@@ -111,7 +111,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           setApiError(null);
         }
       } catch {
-        if (active) setApiError("We couldn't refresh your workspace right now. Please try again.");
+        if (active) setApiError("Your latest information didn't load. Please try again in a moment.");
       } finally {
         if (active) setRefreshing(false);
       }
@@ -167,7 +167,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   }
 
   async function stopApplication() {
-    if (!window.confirm("Stop the active application? If the employer has already received it, this cannot be undone. Check the job status before retrying.")) return;
+    if (!window.confirm("Stop filling out this application now? If it has already been sent, we can't take it back. You can check its status in your queue.")) return;
     setStoppingApplication(true);
     try {
       const result = await apiRequest<{
@@ -181,11 +181,11 @@ export function AppShell({ children }: { children: ReactNode }) {
         stop_requested: result.status === "stop_requested",
         job_id: result.job_id,
       }));
-      if (result.status === "not_running") {
-        setApiError("No active application was running when the stop request arrived.");
-      }
-    } catch (error) {
-      setApiError(error instanceof Error ? error.message : "The application could not be stopped.");
+        if (result.status === "not_running") {
+          setApiError("There wasn't an application running to stop. Nothing was changed.");
+        }
+      } catch (error) {
+        setApiError(error instanceof Error ? error.message : "We couldn't stop that application. Check its status and try again.");
     } finally {
       setStoppingApplication(false);
     }
@@ -361,13 +361,13 @@ export function AppShell({ children }: { children: ReactNode }) {
           collapsed ? "md:pl-20" : "md:pl-64",
         )}
       >
-        <OtpBanner />
+        <OtpDialog />
         {applicationControl.active && (
           <div role="status" className="mx-4 mt-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-warning/40 bg-warning/10 p-4 md:mx-8">
             <div className="min-w-0">
-              <p className="text-sm font-semibold">An application is currently running</p>
+              <p className="text-sm font-semibold">We&apos;re filling out an application for you</p>
               <p className="mt-1 text-sm text-muted-foreground">
-                Stopping halts at the next safe checkpoint. A submission already sent cannot be recalled; verify the employer&apos;s site before retrying.
+                You can stop at any time. We&apos;ll pause at a safe point, but anything already sent can&apos;t be undone.
               </p>
             </div>
             <Button
@@ -378,7 +378,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               onClick={() => void stopApplication()}
             >
               <Square />
-              {applicationControl.stop_requested ? "Stop requested..." : stoppingApplication ? "Requesting stop..." : "Stop application"}
+              {applicationControl.stop_requested || stoppingApplication ? "Stopping..." : "Stop filling this out"}
             </Button>
           </div>
         )}
@@ -386,11 +386,11 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div role="alert" className="mx-4 mt-4 flex items-start gap-3 rounded-xl border border-destructive/30 bg-destructive/5 p-4 md:mx-8">
             <AlertCircle className="mt-0.5 size-5 shrink-0 text-destructive" />
             <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold">Connection problem</p>
+              <p className="text-sm font-semibold">We can&apos;t reach your workspace right now</p>
               <p className="mt-1 wrap-break-word text-sm text-muted-foreground">{apiError}</p>
             </div>
             <Button type="button" size="sm" variant="outline" disabled={refreshing} onClick={() => setRetryCount((count) => count + 1)}>
-              <RefreshCw className={refreshing ? "animate-spin" : ""} /> Retry
+              <RefreshCw className={refreshing ? "animate-spin" : ""} /> Try again
             </Button>
           </div>
         )}

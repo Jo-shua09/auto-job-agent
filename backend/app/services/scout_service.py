@@ -4,6 +4,7 @@ import sys
 import uuid
 import asyncio
 import hashlib
+import time
 from collections import defaultdict
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 from datetime import datetime, timedelta, timezone
@@ -12,10 +13,10 @@ import httpx
 from bs4 import BeautifulSoup
 from playwright.sync_api import sync_playwright
 from pydantic import BaseModel, Field
-from google.genai.errors import ClientError
+from google.genai.errors import ClientError, ServerError
 from google.genai import types
 
-from app.core.gemini_client import create_gemini_client
+from app.core.gemini_client import create_gemini_client, get_gemini_model
 from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
@@ -30,6 +31,7 @@ from app.services.profile_service import (
     get_daily_quota_status,
     clean_no_em_dash,
 )
+from app.services.state_machine import transition_job_state
 
 # --- 1. URL NORMALIZATION & EXPANDED PLATFORM DETECTION ---
 
@@ -60,6 +62,36 @@ def compute_dedup_hash(company: str, role_title: str) -> str:
     norm_role = re.sub(r"[^a-z0-9]", "", role_title.lower())
     raw = f"{norm_co}::{norm_role}"
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+EMAIL_PATTERN = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
+EMAIL_APPLY_HINTS = (
+    "send your cv",
+    "send cv",
+    "send your resume",
+    "send resume",
+    "updated cv",
+    "email your",
+    "email cv",
+    "email resume",
+    "apply by email",
+    "apply via email",
+    "application to",
+    "applications to",
+    "cover letter to",
+    "email subject",
+    "send an email",
+)
+
+def extract_application_email(text: str) -> Optional[str]:
+    if not text:
+        return None
+    lowered = text.lower()
+    if not any(hint in lowered for hint in EMAIL_APPLY_HINTS):
+        return None
+    for address in EMAIL_PATTERN.findall(text):
+        if not address.lower().startswith(("noreply@", "no-reply@", "donotreply@")):
+            return address.lower()
+    return None
 
 def detect_ats_platform(url: str) -> ATSPlatform:
     if not url:
@@ -173,27 +205,8 @@ def score_job_with_gemini(
 
     api_key = os.getenv("GEMINI_API_KEY")
     if not api_key or api_key == "your_gemini_api_key_here":
-        matched_skills = [s for s in all_skills if s.lower().split()[0] in jd_lower]
-        score = min(95, 58 + len(matched_skills) * 6)
-        best_role = active_roles[0]
-        for r in active_roles:
-            if any(w.lower() in (provided_role or jd_text[:200]).lower() for w in r.split() if len(w) > 2):
-                best_role = r
-                score = min(98, score + 10)
-                break
-        return JDMatchEvaluation(
-            extracted_company_name=provided_company,
-            extracted_role_title=provided_role,
-            match_score=score,
-            matched_target_role=best_role,
-            location_type=(
-                "REMOTE" if "remote" in jd_lower
-                else "HYBRID" if "hybrid" in jd_lower
-                else "ONSITE" if any(term in jd_lower for term in ("on-site", "onsite", "on site", "in person"))
-                else "UNKNOWN"
-            ),
-            has_hard_blocker=False,
-            match_reasoning=f"Matched {len(matched_skills)} core skills from your Master Vault ({', '.join(matched_skills[:5])}).",
+        raise GeminiServiceUnavailableError(
+            "Set GEMINI_API_KEY to analyze and score discovered jobs against your real profile. The agent does not fabricate job matches or applications."
         )
 
     client = create_gemini_client(api_key)
@@ -222,33 +235,48 @@ def score_job_with_gemini(
     4. Never use long em-dashes (—) or en-dashes (–). Use standard hyphens (-) only.
     """
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=JDMatchEvaluation,
-                temperature=0.0,
-            ),
-        )
-        result = JDMatchEvaluation.model_validate_json(response.text)
-        result.match_reasoning = clean_no_em_dash(result.match_reasoning)
-        result.extracted_company_name = clean_no_em_dash(result.extracted_company_name)
-        result.extracted_role_title = clean_no_em_dash(result.extracted_role_title)
-        return result
-    except ClientError as exc:
-        if exc.code == 429:
-            raise GeminiQuotaExceededError(
-                "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+    attempts = 4
+    for attempt in range(attempts):
+        try:
+            response = client.models.generate_content(
+                model=get_gemini_model(),
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=JDMatchEvaluation,
+                    temperature=0.0,
+                ),
+            )
+            result = JDMatchEvaluation.model_validate_json(response.text)
+            result.match_reasoning = clean_no_em_dash(result.match_reasoning)
+            result.extracted_company_name = clean_no_em_dash(result.extracted_company_name)
+            result.extracted_role_title = clean_no_em_dash(result.extracted_role_title)
+            return result
+        except ClientError as exc:
+            if exc.code == 429:
+                raise GeminiQuotaExceededError(
+                    "Gemini API quota is exhausted. Check your Gemini API plan or wait for the quota to reset before retrying."
+                ) from exc
+            if exc.code >= 500 and attempt < attempts - 1:
+                time.sleep(min(2 ** (attempt + 1), 8))
+                continue
+            raise GeminiServiceUnavailableError(
+                "The AI job analysis service is temporarily unavailable. Please try again shortly."
             ) from exc
-        raise GeminiServiceUnavailableError(
-            "The AI job analysis service is temporarily unavailable. Please try again shortly."
-        ) from exc
-    except Exception as exc:
-        raise GeminiServiceUnavailableError(
-            "The AI job analysis service is temporarily unavailable. Please try again shortly."
-        ) from exc
+        except ServerError:
+            if attempt < attempts - 1:
+                time.sleep(min(2 ** (attempt + 1), 8))
+                continue
+            raise GeminiServiceUnavailableError(
+                "The AI job analysis service is temporarily unavailable. Please try again shortly."
+            )
+        except Exception:
+            if attempt < attempts - 1:
+                time.sleep(min(2 ** (attempt + 1), 8))
+                continue
+            raise GeminiServiceUnavailableError(
+                "The AI job analysis service is temporarily unavailable. Please try again shortly."
+            )
 
 # --- 3. MULTI-PLATFORM DISCOVERY SOURCES ---
 
@@ -502,15 +530,19 @@ async def run_scout_discovery(
         )
 
         job_id = f"job_{uuid.uuid4().hex[:10]}"
+        application_email = extract_application_email(cand["raw_jd_text"])
         record = JobRecord(
             id=job_id,
             user_id=user_ref.id,
             external_url=norm_url,
+            application_email=application_email,
             dedup_hash=d_hash,
             company_name=co_name,
             role_title=r_title,
             matched_target_role=clean_no_em_dash(evaluation.matched_target_role),
-            ats_platform=detect_ats_platform(norm_url),
+            ats_platform=(
+                ATSPlatform.EMAIL_APPLY if application_email else detect_ats_platform(norm_url)
+            ),
             location_type=clean_no_em_dash(evaluation.location_type),
             raw_jd_text=cand["raw_jd_text"],
             match_score=evaluation.match_score,
@@ -585,15 +617,19 @@ async def paste_and_ingest_job(
     target_status = JobStatus.APPLYING_QUEUED if (auto_queue_for_apply and quota["can_apply_more_today"]) else JobStatus.DISCOVERED
 
     job_id = f"job_{uuid.uuid4().hex[:10]}"
+    application_email = extract_application_email(jd_content)
     record = JobRecord(
         id=job_id,
         user_id=user_ref.id,
         external_url=norm_url,
+        application_email=application_email,
         dedup_hash=d_hash,
         company_name=final_company,
         role_title=final_role,
         matched_target_role=clean_no_em_dash(evaluation.matched_target_role),
-        ats_platform=detect_ats_platform(norm_url),
+        ats_platform=(
+            ATSPlatform.EMAIL_APPLY if application_email else detect_ats_platform(norm_url)
+        ),
         location_type=clean_no_em_dash(evaluation.location_type),
         raw_jd_text=clean_html_to_text(jd_content),
         match_score=evaluation.match_score,
@@ -613,13 +649,35 @@ async def paste_and_ingest_job(
 
 def list_discovered_jobs(status_filter: Optional[JobStatus] = None, user_id: Optional[str] = None) -> List[dict]:
     user_ref = get_user_ref(user_id)
+    stale_cutoff = datetime.now(timezone.utc) - timedelta(minutes=20)
+
+    for doc in user_ref.collection("jobs").stream():
+        data = doc.to_dict() or {}
+        status = data.get("status")
+        if status not in {JobStatus.TAILORING_IN_PROGRESS.value, JobStatus.APPLYING_QUEUED.value}:
+            continue
+        if user_ref.collection("tailored_packages").document(doc.id).get().exists:
+            continue
+
+        updated_at = data.get("updated_at")
+        try:
+            if isinstance(updated_at, str):
+                updated_at = datetime.fromisoformat(updated_at.replace("Z", "+00:00"))
+            elif not isinstance(updated_at, datetime):
+                updated_at = stale_cutoff - timedelta(seconds=1)
+            if updated_at.tzinfo is None:
+                updated_at = updated_at.replace(tzinfo=timezone.utc)
+        except (TypeError, ValueError):
+            updated_at = stale_cutoff - timedelta(seconds=1)
+
+        if status == JobStatus.APPLYING_QUEUED.value or updated_at < stale_cutoff:
+            transition_job_state(doc.id, JobStatus.DISCOVERED, user_id)
+
     query = user_ref.collection("jobs")
     if status_filter:
         query = query.where("status", "==", status_filter.value)
     docs = [doc.to_dict() for doc in query.stream()]
     return sorted(docs, key=lambda x: x.get("match_score", 0), reverse=True)
-
-    from collections import defaultdict
 
 def log_agent_step(
     user_friendly_title: str,
@@ -701,8 +759,10 @@ def get_recent_activity_stream(limit: int = 25, user_id: Optional[str] = None) -
 
 def get_applied_jobs_grouped_by_day(user_id: Optional[str] = None) -> dict:
     """
-    Returns all applied/post-application jobs grouped chronologically by Day
+    Returns all submitted/post-submission jobs grouped chronologically by Day
     (e.g. 'Saturday, Oct 31, 2026') along with their tailored CV PDF links.
+    Jobs that are only queued, in progress, or waiting for verification are excluded
+    until submission is actually confirmed.
     """
     user_ref = get_user_ref(user_id)
     applied_statuses = {
@@ -710,9 +770,6 @@ def get_applied_jobs_grouped_by_day(user_id: Optional[str] = None) -> dict:
         JobStatus.INTERVIEW_INVITE.value,
         JobStatus.REPLIED_REJECTED.value,
         JobStatus.OFFER_STAGE.value,
-        JobStatus.APPLYING_QUEUED.value,
-        JobStatus.APPLYING_ACTIVE.value,
-        JobStatus.WAITING_FOR_OTP.value,
     }
 
     all_jobs = [d.to_dict() for d in user_ref.collection("jobs").stream()]

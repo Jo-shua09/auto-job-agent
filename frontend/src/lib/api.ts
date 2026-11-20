@@ -20,17 +20,16 @@ async function getErrorMessage(response: Response): Promise<string> {
   }
 
   const detailText = typeof detail === "string" ? detail.trim() : "";
-  const normalizedDetail = detailText.toLowerCase();
 
   if (detailText && /(gemini.*(quota|limit)|ai.*(daily|quota).*limit|quota.*reset|daily.*limit.*reached)/i.test(detailText)) {
-    return "Your AI daily limit has been reached. Please try again later.";
+    return "We've used up today's AI allowance. Your saved work is safe. Come back tomorrow or upgrade your plan to keep going.";
   }
 
   if (detailText && /(backend encountered an unexpected error|internal server error|check the backend logs|stack trace|traceback)/i.test(detailText)) {
-    return "We couldn't process that job right now. This is usually a temporary service issue or an AI quota issue. Please try again in a minute.";
+    return "Something didn't go through on our side. Your work is safe. Please try again in a moment.";
   }
 
-  if (response.status >= 500) return "The job service is temporarily unavailable. Please try again shortly.";
+  if (response.status >= 500) return "A service we use is taking a break. Please try again in a moment.";
   if (typeof detail === "string" && detail.trim() && !/(traceback|exception|api key|environment variable|stack trace|internal server|auth\/)/i.test(detail)) {
     return detail;
   }
@@ -38,14 +37,14 @@ async function getErrorMessage(response: Response): Promise<string> {
     const messages = detail
       .map((item) => (item && typeof item === "object" && "msg" in item ? item.msg : null))
       .filter((message): message is string => typeof message === "string");
-    return messages.length ? messages.join(". ") : "Some information is missing or invalid. Review the form and try again.";
+    return messages.length ? messages.join(". ") : "A few details are missing or don't look right. Check what you entered and try again.";
   }
 
-  if (response.status === 401) return "Your session has expired. Sign in again to continue.";
-  if (response.status === 403) return "You don't have permission to do that.";
-  if (response.status === 404) return "We couldn't find that item. Refresh the page and try again.";
-  if (response.status === 429) return "There have been too many requests. Wait a moment, then try again.";
-  return `We couldn't complete that request (error ${response.status}). Please try again.`;
+  if (response.status === 401) return "For your security, please sign in again to continue.";
+  if (response.status === 403) return "You don't have access to that right now.";
+  if (response.status === 404) return "We couldn't find that item. It may have been moved or removed.";
+  if (response.status === 429) return "You've reached the current limit. Please wait a moment and try again.";
+  return "That didn't go through. Please try again.";
 }
 
 export async function apiRequest<T>(path: string, optionsOrMethod: RequestInit | string = {}, body?: unknown): Promise<T> {
@@ -68,7 +67,7 @@ export async function apiRequest<T>(path: string, optionsOrMethod: RequestInit |
     });
   } catch (error) {
     if (error instanceof TypeError) {
-      throw new Error("We couldn't connect to your workspace right now. Check your internet connection and try again.");
+      throw new Error("We can't reach your workspace right now. Check your connection and try again.");
     }
     throw error;
   }
@@ -420,8 +419,24 @@ export const getAppliedJobsHistoryByDay = () =>
 // 6. GMAIL INBOX WATCHER & EVENTS
 // ==========================================
 
+export interface GmailIntegrationStatus {
+  gmail_address: string;
+  effective_gmail_address: string;
+  has_app_password: boolean;
+  configured: boolean;
+  uses_profile_email: boolean;
+}
+
+export const getGmailIntegration = () => apiRequest<GmailIntegrationStatus>("/api/integrations/gmail");
+
+export const saveGmailIntegration = (payload: { gmail_address?: string; gmail_app_password?: string }) =>
+  apiRequest<GmailIntegrationStatus>("/api/integrations/gmail", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+
 export const pollGmailInbox = (maxEmails = 10) =>
-  apiRequest<{ status: string; matched_events_count?: number; processed_events: unknown[] }>(`/api/inbox/poll?max_emails=${maxEmails}`, {
+  apiRequest<{ status: string; matched_events_count?: number; processed_events?: unknown[]; hint?: string }>(`/api/inbox/poll?max_emails=${maxEmails}`, {
     method: "POST",
   });
 

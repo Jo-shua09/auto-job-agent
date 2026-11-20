@@ -9,6 +9,7 @@ ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     },
     JobStatus.TAILORING_IN_PROGRESS: {
         JobStatus.AWAITING_APPROVAL,
+        JobStatus.DISCOVERED,
         JobStatus.FAILED_NEEDS_MANUAL,
     },
     JobStatus.AWAITING_APPROVAL: {
@@ -18,6 +19,9 @@ ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
     },
     JobStatus.APPLYING_QUEUED: {
         JobStatus.APPLYING_ACTIVE,
+        JobStatus.APPLIED,
+        JobStatus.DISCOVERED,
+        JobStatus.FAILED_NEEDS_MANUAL,
         JobStatus.SKIPPED,
     },
     JobStatus.APPLYING_ACTIVE: {
@@ -36,6 +40,7 @@ ALLOWED_TRANSITIONS: dict[JobStatus, set[JobStatus]] = {
         JobStatus.SKIPPED,
     },
     JobStatus.APPLIED: {
+        JobStatus.FAILED_NEEDS_MANUAL,
         JobStatus.REPLIED_REJECTED,
         JobStatus.INTERVIEW_INVITE,
         JobStatus.OFFER_STAGE,

@@ -123,7 +123,10 @@ export default function QueueView() {
     try {
       if (!await saveEdits()) throw new Error("Save your tailored package before approving it.");
       await apiRequest(`/api/jobs/${encodeURIComponent(selectedId)}/approve`, "POST");
-      await apiRequest(`/api/apply/${encodeURIComponent(selectedId)}/execute`, "POST");
+      const result = await apiRequest<{ status?: string; message?: string; error?: string }>(`/api/apply/${encodeURIComponent(selectedId)}/execute`, "POST");
+      if (result?.status === "FAILED_NEEDS_MANUAL") {
+        throw new Error(result.message || result.error || "We couldn't confirm this application was sent.");
+      }
       toast.success("Application submitted to the agent.");
       setSelectedId("");
       await refreshQueue();

@@ -1,15 +1,19 @@
 import os
 import sys
+import ssl
+import smtplib
 import asyncio
 import threading
 from pathlib import Path
+from email.message import EmailMessage
+from email.utils import formataddr
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 from pydantic import BaseModel, Field
 from playwright.sync_api import sync_playwright, Page
 from google.genai import types
 
-from app.core.gemini_client import create_gemini_client
+from app.core.gemini_client import create_gemini_client, get_gemini_model
 from app.core.database import get_user_ref
 from app.models.schemas import (
     JobRecord,
@@ -177,7 +181,7 @@ def map_custom_dom_fields_with_gemini(
     """
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=get_gemini_model(),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -393,6 +397,163 @@ def click_submit_button_on_page(page: Page, stop_event: threading.Event) -> bool
             return True
     return False
 
+SUBMISSION_CONFIRMATION_KEYWORDS = (
+    "application submitted",
+    "application received",
+    "successfully submitted",
+    "submission successful",
+    "thank you for applying",
+    "thank you for your application",
+    "we have received your application",
+    "your application has been submitted",
+    "application complete",
+)
+
+def detect_submission_confirmation(page: Page) -> bool:
+    try:
+        body_text = (page.locator("body").inner_text(timeout=3000) or "").lower()
+        if any(keyword in body_text for keyword in SUBMISSION_CONFIRMATION_KEYWORDS):
+            return True
+        url = (page.url or "").lower()
+        return any(part in url for part in ("confirmation", "thank-you", "thankyou", "success", "submitted"))
+    except Exception:
+        return False
+
+def _fail_application(job_id: str, user_id: Optional[str], friendly_message: str, technical_message: str) -> dict:
+    try:
+        transition_job_state(job_id, JobStatus.FAILED_NEEDS_MANUAL, user_id)
+    except ValueError:
+        pass
+    update_execution_log(
+        job_id,
+        state="ERROR",
+        step_message=friendly_message,
+        error_message=technical_message,
+        user_id=user_id,
+    )
+    log_agent_step(
+        "This application needs a quick look",
+        friendly_message,
+        phase="APPLY",
+        job_id=job_id,
+        status="error",
+        user_id=user_id,
+    )
+    return {
+        "status": "FAILED_NEEDS_MANUAL",
+        "job_id": job_id,
+        "message": friendly_message,
+        "error": technical_message,
+    }
+
+def _send_email_application_sync(
+    job: JobRecord,
+    profile: MasterProfile,
+    package: TailoredPackage,
+    pdf_file_path: Path,
+    user_id: Optional[str],
+    stop_event: threading.Event,
+) -> dict:
+    _raise_if_stop_requested(stop_event)
+    job_id = job.id
+    recipient = (job.application_email or "").strip()
+
+    if not recipient:
+        return _fail_application(
+            job_id,
+            user_id,
+            "We couldn't find an application email for this job, so nothing was sent.",
+            "Missing application_email on job record",
+        )
+
+    gmail_user = os.getenv("GMAIL_ADDRESS", "").strip()
+    app_password = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    if user_id:
+        try:
+            from app.services.profile_service import get_gmail_integration_config
+
+            integration = get_gmail_integration_config(user_id)
+            gmail_user = (integration.get("gmail_address") or profile.email or gmail_user or "").strip()
+            app_password = (integration.get("gmail_app_password") or app_password or "").strip()
+        except Exception:
+            gmail_user = (profile.email or gmail_user or "").strip()
+    else:
+        gmail_user = (profile.email or gmail_user or "").strip()
+    if not gmail_user or not app_password:
+        return _fail_application(
+            job_id,
+            user_id,
+            "Email sending isn't set up yet, so nothing was sent. Save your Gmail address and 16-character App Password in Settings, or configure GMAIL_ADDRESS and GMAIL_APP_PASSWORD in backend .env.",
+            "Missing Gmail address or Gmail app password",
+        )
+
+    if not pdf_file_path.exists():
+        return _fail_application(
+            job_id,
+            user_id,
+            "Your tailored CV is missing, so we didn't send an incomplete application.",
+            f"Tailored CV PDF not found: {pdf_file_path}",
+        )
+
+    cover_letter = (package.cover_letter_text or "").strip()
+    if not cover_letter:
+        cover_letter = (
+            f"Dear {job.company_name} team,\n\n"
+            f"I am applying for the {job.role_title} role. Please find my tailored CV attached.\n\n"
+            f"Best regards,\n{profile.full_name}"
+        )
+
+    contact = [value for value in (profile.email, profile.phone) if value]
+    links = [
+        value for value in (profile.portfolio_url, profile.github_url, profile.linkedin_url)
+        if value
+    ]
+    body = f"{cover_letter}\n\n---\nContact: {', '.join(contact)}"
+    if links:
+        body += f"\nLinks: {', '.join(links)}"
+
+    message = EmailMessage()
+    message["Subject"] = f"Application for {job.role_title} - {profile.full_name}"
+    message["From"] = formataddr((profile.full_name, gmail_user))
+    message["To"] = recipient
+    message.set_content(clean_no_em_dash(body))
+    with pdf_file_path.open("rb") as pdf_file:
+        message.add_attachment(
+            pdf_file.read(),
+            maintype="application",
+            subtype="pdf",
+            filename=pdf_file_path.name,
+        )
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, context=ssl.create_default_context(), timeout=20) as smtp:
+            smtp.login(gmail_user, app_password)
+            smtp.send_message(message)
+    except Exception as exc:
+        return _fail_application(
+            job_id,
+            user_id,
+            "We couldn't email your application. Nothing was sent. Please try again.",
+            f"SMTP failure: {exc}",
+        )
+
+    transition_job_state(job_id, JobStatus.APPLIED, user_id)
+    update_execution_log(
+        job_id,
+        state="SUBMITTED",
+        step_message=f"We emailed your CV and cover letter to {recipient}.",
+        user_id=user_id,
+    )
+    log_agent_step(
+        f"Application sent: {job.role_title} at {job.company_name}",
+        f"We emailed your CV and cover letter to {recipient}.",
+        phase="APPLY",
+        job_id=job_id,
+        status="completed",
+        user_id=user_id,
+    )
+    return {"status": "applied_via_email", "job_id": job_id, "recipient": recipient}
+
 # --- 4. MAIN SYNCHRONOUS PLAYWRIGHT WORKER (WINDOWS-SAFE) ---
 
 def _execute_playwright_application_sync(
@@ -413,16 +574,27 @@ def _execute_playwright_application_sync(
     user_ref = get_user_ref(user_id)
     job_id = job.id
 
+    if job.application_email:
+        return _send_email_application_sync(job, profile, package, pdf_file_path, user_id, stop_event)
+
+    if not job.external_url.startswith("http"):
+        return _fail_application(
+            job_id,
+            user_id,
+            "We couldn't find a real application link or email for this job, so nothing was sent.",
+            "Missing application_url and application_email",
+        )
+
     transition_job_state(job_id, JobStatus.APPLYING_ACTIVE, user_id)
     update_execution_log(
         job_id,
         state="NAVIGATING",
-        step_message=f"Opening application page for {job.role_title} at {job.company_name}...",
+        step_message=f"Opening the application for {job.role_title} at {job.company_name}...",
         user_id=user_id,
     )
     log_agent_step(
-        f"Opening Application Form: {job.company_name}",
-        f"Navigating to {job.ats_platform.value.upper()} form for {job.role_title}...",
+        f"Opening the application for {job.company_name}",
+        f"Heading to the application form for {job.role_title}...",
         phase="APPLY",
         job_id=job_id,
         status="active",
@@ -439,36 +611,18 @@ def _execute_playwright_application_sync(
 
         try:
             _raise_if_stop_requested(stop_event)
-            if job.external_url.startswith("http") and "manual-paste.local" not in job.external_url:
-                page.goto(job.external_url, wait_until="domcontentloaded", timeout=25000)
-                page.wait_for_timeout(1500)
-            else:
-                # Render a clean local harness page if testing a manual text-only paste
-                page.set_content(f"""
-                <html><body style="font-family:sans-serif;padding:40px;">
-                  <h2>Application Form: {job.role_title} at {job.company_name}</h2>
-                  <form>
-                    <label for="first_name">First Name</label><input id="first_name" name="first_name" type="text" /><br/><br/>
-                    <label for="last_name">Last Name</label><input id="last_name" name="last_name" type="text" /><br/><br/>
-                    <label for="email">Email</label><input id="email" name="email" type="email" /><br/><br/>
-                    <label for="phone">Phone</label><input id="phone" name="phone" type="tel" /><br/><br/>
-                    <label for="resume">Resume PDF</label><input id="resume" name="resume" type="file" /><br/><br/>
-                    <label for="cover_letter">Cover Letter</label><textarea id="cover_letter" name="cover_letter"></textarea><br/><br/>
-                    {"<p>Please enter the security code sent to your email:</p><input name='security_code' type='text' />" if simulate_otp_for_testing else ""}
-                    <button type="button" onclick="document.body.innerHTML += '<h3>Application Submitted!</h3>'">Submit Application</button>
-                  </form>
-                </body></html>
-                """)
+            page.goto(job.external_url, wait_until="domcontentloaded", timeout=25000)
+            page.wait_for_timeout(1500)
 
             update_execution_log(
                 job_id,
                 state="FILLING_FORM",
-                step_message="Uploading tailored PDF CV and filling out form fields...",
+                step_message="Adding your tailored CV and answering the form questions...",
                 user_id=user_id,
             )
             log_agent_step(
-                f"Uploading Tailored CV & Filling Answers ({job.company_name})",
-                f"Attaching {pdf_file_path.name} and populating profile + screening responses...",
+                f"Filling in the application for {job.company_name}",
+                "Adding your tailored CV and answering questions from your profile...",
                 phase="APPLY",
                 job_id=job_id,
                 status="active",
@@ -484,10 +638,10 @@ def _execute_playwright_application_sync(
                 stop_event=stop_event,
             )
 
-            # Click submit if not simulating pre-submit OTP
+            submitted = False
             if not simulate_otp_for_testing:
                 _raise_if_stop_requested(stop_event)
-                click_submit_button_on_page(page, stop_event)
+                submitted = click_submit_button_on_page(page, stop_event)
 
             # Check if an Email OTP / Verification Code prompt appeared!
             needs_otp = simulate_otp_for_testing or detect_otp_prompt_on_page(page)
@@ -505,14 +659,14 @@ def _execute_playwright_application_sync(
                 update_execution_log(
                     job_id,
                     state="WAITING_FOR_OTP",
-                    step_message=f"Action Required: {job.company_name} sent a verification code to {profile.email}. Enter it in the Command Center to finish submitting.",
+                    step_message=f"{job.company_name} sent a verification code to {profile.email}. Enter it in the dialog that opens to finish submitting.",
                     otp_required=True,
                     screenshot_url=f"/pdfs/screenshots/{otp_shot_name}",
                     user_id=user_id,
                 )
                 log_agent_step(
-                    f"Waiting for Email OTP Code ({job.company_name})",
-                    f"Application form paused. Type the verification code sent to {profile.email} to complete submission.",
+                    "Waiting for your security code",
+                    f"{job.company_name} sent a code. We've paused right here so you don't lose your place. Enter it when you're ready.",
                     phase="OTP",
                     job_id=job_id,
                     status="waiting_input",
@@ -536,7 +690,7 @@ def _execute_playwright_application_sync(
                     update_execution_log(
                         job_id,
                         state="ERROR",
-                        step_message="OTP wait window (5 minutes) timed out. You can retry anytime.",
+                        step_message="We didn't get the security code in time. You can try this application again whenever you're ready.",
                         otp_required=False,
                         error_message="OTP timeout after 300 seconds",
                         user_id=user_id,
@@ -549,7 +703,17 @@ def _execute_playwright_application_sync(
                 transition_job_state(job_id, JobStatus.APPLYING_ACTIVE, user_id)
                 enter_otp_code_on_page(page, otp_received)
                 _raise_if_stop_requested(stop_event)
-                click_submit_button_on_page(page, stop_event)
+                submitted = click_submit_button_on_page(page, stop_event)
+
+            page.wait_for_timeout(1500)
+            if not submitted or not detect_submission_confirmation(page):
+                browser.close()
+                return _fail_application(
+                    job_id,
+                    user_id,
+                    "We reached the application page but couldn't confirm it was sent, so we didn't mark it as applied.",
+                    "No submit confirmation detected",
+                )
 
             # Capture final confirmation screenshot
             final_shot_name = f"submitted_{job_id}.png"
@@ -566,8 +730,8 @@ def _execute_playwright_application_sync(
                 user_id=user_id,
             )
             log_agent_step(
-                f"Application Submitted: {job.role_title} at {job.company_name}",
-                f"Filled {filled_count} fields, attached tailored CV, and captured confirmation snapshot.",
+                f"Application sent: {job.role_title} at {job.company_name}",
+                f"We filled {filled_count} fields, added your tailored CV and saved a confirmation.",
                 phase="APPLY",
                 job_id=job_id,
                 status="completed",
@@ -595,8 +759,8 @@ def _execute_playwright_application_sync(
                 user_id=user_id,
             )
             log_agent_step(
-                f"Application Stopped: {job.company_name}",
-                "Stopped at the user's request. Verify the employer's application page before retrying.",
+                f"We stopped the application for {job.company_name}",
+                "You asked us to stop. Check the employer's site before trying again.",
                 phase="APPLY",
                 job_id=job_id,
                 status="stopped",
@@ -615,15 +779,15 @@ def _execute_playwright_application_sync(
             update_execution_log(
                 job_id,
                 state="ERROR",
-                step_message=f"Browser encountered an issue on {job.company_name}: {str(e)[:120]}",
+                step_message=f"We hit a problem on {job.company_name}'s application form. Your progress is saved; you can try again.",
                 otp_required=False,
                 screenshot_url=f"/pdfs/screenshots/{err_shot_name}",
                 error_message=str(e)[:300],
                 user_id=user_id,
             )
             log_agent_step(
-                f"Manual Attention Needed: {job.company_name}",
-                f"Paused during form submission: {str(e)[:100]}",
+                f"This application needs a quick look: {job.company_name}",
+                "We paused while filling in the form. Open your queue to see what's left.",
                 phase="APPLY",
                 job_id=job_id,
                 status="error",
@@ -676,15 +840,29 @@ async def _execute_job_application_with_run(
     if run.stop_event.is_set():
         return {"status": "STOPPED_BEFORE_START", "job_id": job_id}
 
-    # Move job to APPLYING_QUEUED if it was in AWAITING_APPROVAL or DISCOVERED
-    if job.status == JobStatus.DISCOVERED:
+    # Reload status after any tailoring and queue only valid, unsubmitted jobs.
+    current_job_snap = user_ref.collection("jobs").document(job_id).get()
+    current_status = (
+        JobStatus(current_job_snap.to_dict().get("status"))
+        if current_job_snap.exists and current_job_snap.to_dict().get("status")
+        else job.status
+    )
+    if current_status == JobStatus.APPLIED:
+        return {"status": "ALREADY_APPLIED", "job_id": job_id}
+    if current_status == JobStatus.AWAITING_APPROVAL:
+        transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
+        current_status = JobStatus.APPLYING_QUEUED
+    elif current_status == JobStatus.FAILED_NEEDS_MANUAL:
+        transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
+        current_status = JobStatus.APPLYING_QUEUED
+    elif current_status == JobStatus.DISCOVERED:
         transition_job_state(job_id, JobStatus.TAILORING_IN_PROGRESS, user_id)
         transition_job_state(job_id, JobStatus.AWAITING_APPROVAL, user_id)
         transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
-    elif job.status == JobStatus.AWAITING_APPROVAL:
-        transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
-    elif job.status == JobStatus.FAILED_NEEDS_MANUAL:
-        transition_job_state(job_id, JobStatus.APPLYING_QUEUED, user_id)
+        current_status = JobStatus.APPLYING_QUEUED
+
+    if current_status != JobStatus.APPLYING_QUEUED:
+        raise ValueError(f"Job is not ready to apply in its current state: {current_status.value}")
 
     if run.stop_event.is_set():
         return {"status": "STOPPED_BEFORE_START", "job_id": job_id}

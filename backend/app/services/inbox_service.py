@@ -9,7 +9,7 @@ from typing import List, Optional
 from pydantic import BaseModel, Field
 from google.genai import types
 
-from app.core.gemini_client import create_gemini_client
+from app.core.gemini_client import create_gemini_client, get_gemini_model
 from app.core.database import get_user_ref
 from app.models.schemas import JobStatus
 from app.services.profile_service import clean_no_em_dash
@@ -106,7 +106,7 @@ def classify_recruiter_email_with_gemini(
     """
     try:
         resp = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=get_gemini_model(),
             contents=prompt,
             config=types.GenerateContentConfig(
                 response_mime_type="application/json",
@@ -229,7 +229,7 @@ def process_and_record_email_event(
 
     if evaluation.category != "UNRELATED":
         log_agent_step(
-            f"Inbox Update ({evaluation.category}): {event_payload.get('company_name') or sender}",
+            f"Update from {event_payload.get('company_name') or sender}",
             evaluation.summary_note,
             phase="INBOX",
             job_id=job_id,
@@ -253,20 +253,39 @@ def _decode_mime_Text(raw_val: str) -> str:
             out.append(str(content))
     return "".join(out)
 
+def _resolve_gmail_credentials(user_id: Optional[str] = None) -> tuple[str, str]:
+    """Resolves Gmail credentials per user, falling back to server environment variables."""
+    gmail_user = os.getenv("GMAIL_ADDRESS", "").strip()
+    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD", "").strip()
+    if not user_id:
+        return gmail_user, gmail_app_password
+    try:
+        from app.services.profile_service import get_gmail_integration_config, get_master_profile
+
+        integration = get_gmail_integration_config(user_id)
+        profile = get_master_profile(user_id)
+        profile_email = str(profile.get("email") or "").strip()
+        gmail_user = integration.get("gmail_address") or profile_email or gmail_user
+        gmail_app_password = integration.get("gmail_app_password") or gmail_app_password
+    except Exception:
+        pass
+    return gmail_user, gmail_app_password
+
 def poll_gmail_inbox_sync(max_emails: int = 10, user_id: Optional[str] = None) -> dict:
     """
-    Connects to Gmail via IMAP (Read-Only) if GMAIL_ADDRESS and GMAIL_APP_PASSWORD
-    are set in backend/.env, scanning the latest unseen/recent emails from applied companies.
+    Connects to Gmail via IMAP (Read-Only) using the user's saved Gmail settings
+    (or server defaults), scanning recent inbox emails for application updates.
     """
-    gmail_user = os.getenv("GMAIL_ADDRESS")
-    gmail_app_password = os.getenv("GMAIL_APP_PASSWORD")
+    gmail_user, gmail_app_password = _resolve_gmail_credentials(user_id)
 
     if not gmail_user or not gmail_app_password:
         return {
             "status": "gmail_credentials_not_configured",
             "hint": (
-                "To enable live Gmail polling, add GMAIL_ADDRESS and a 16-char GMAIL_APP_PASSWORD "
-                "to backend/.env (or use POST /api/inbox/simulate-email to test email classification)."
+                "To enable live Gmail polling, save your Gmail address and a 16-character Gmail App Password in Settings. "
+                "If your Profile Vault email is the Gmail inbox you want to track, you can leave the Gmail address blank in Settings. "
+                "Server-wide GMAIL_ADDRESS and GMAIL_APP_PASSWORD in backend/.env can also be used as defaults. "
+                "You can use POST /api/inbox/simulate-email to test email classification."
             ),
             "processed_events": [],
         }
