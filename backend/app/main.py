@@ -1,6 +1,5 @@
 import logging
 import os
-import uuid
 from typing import List, Optional, Dict
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
@@ -56,7 +55,6 @@ from app.services.applicator_service import (
 )
 from app.services.inbox_service import (
     poll_gmail_inbox_sync,
-    process_and_record_email_event,
     list_email_events,
 )
 from app.services.state_machine import transition_job_state
@@ -124,14 +122,6 @@ class CustomizeTailoredPackageRequest(BaseModel):
 
 class SubmitOTPRequest(BaseModel):
     otp_code: str = Field(min_length=3, max_length=12)
-
-class SimulateEmailRequest(BaseModel):
-    sender: str = Field(default="careers@linear.app")
-    subject: str = Field(default="Invitation to Interview: Senior AI Frontend Engineer at Linear")
-    snippet: str = Field(
-        default="Hi, our engineering team reviewed your application and would love to schedule a 30-minute technical intro call this week."
-    )
-
 
 class UpdateGmailIntegrationRequest(BaseModel):
     gmail_address: Optional[str] = None
@@ -702,20 +692,6 @@ def trigger_gmail_inbox_poll(
 ):
     return poll_gmail_inbox_sync(max_emails=max_emails, user_id=current_user["user_id"])
 
-@app.post("/api/inbox/simulate-email")
-def simulate_incoming_recruiter_email(
-    req: SimulateEmailRequest,
-    current_user: dict = Depends(get_current_user),
-):
-    msg_id = f"sim_email_{uuid.uuid4().hex[:8]}"
-    return process_and_record_email_event(
-        message_id=msg_id,
-        sender=req.sender,
-        subject=req.subject,
-        snippet=req.snippet,
-        user_id=current_user["user_id"],
-    )
-
 @app.get("/api/inbox/events")
 def read_tracked_email_events(current_user: dict = Depends(get_current_user)):
     return list_email_events(user_id=current_user["user_id"])
@@ -748,8 +724,8 @@ def update_gmail_integration(
     return saved
 
 
-app = CORSMiddleware(
-    app=app,
+app.add_middleware(
+    CORSMiddleware,
     allow_origins=frontend_origins,
     allow_credentials=False,
     allow_methods=["*"],

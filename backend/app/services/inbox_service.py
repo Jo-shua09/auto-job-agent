@@ -284,8 +284,7 @@ def poll_gmail_inbox_sync(max_emails: int = 10, user_id: Optional[str] = None) -
             "hint": (
                 "To enable live Gmail polling, save your Gmail address and a 16-character Gmail App Password in Settings. "
                 "If your Profile Vault email is the Gmail inbox you want to track, you can leave the Gmail address blank in Settings. "
-                "Server-wide GMAIL_ADDRESS and GMAIL_APP_PASSWORD in backend/.env can also be used as defaults. "
-                "You can use POST /api/inbox/simulate-email to test email classification."
+                "Server-wide GMAIL_ADDRESS and GMAIL_APP_PASSWORD in backend/.env can also be used as defaults."
             ),
             "processed_events": [],
         }
