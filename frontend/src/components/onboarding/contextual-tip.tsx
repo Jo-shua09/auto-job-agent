@@ -27,7 +27,7 @@ export function ContextualTip({
           <h2 className="mt-1 font-heading text-base font-semibold tracking-tight">{title}</h2>
           <p className="mt-1.5 leading-6 text-muted-foreground">{body}</p>
         </div>
-        <Button variant="ghost" size="icon-sm" aria-label="Dismiss tip" onClick={() => dismissTip(tipKey)} className="shrink-0 text-muted-foreground hover:text-foreground">
+        <Button variant="ghost" size="icon" aria-label="Dismiss tip" onClick={() => dismissTip(tipKey)} className="size-8 shrink-0 text-muted-foreground hover:text-foreground">
           <X className="size-4" />
         </Button>
       </div>
