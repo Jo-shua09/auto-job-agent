@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/app-shell";
+import { ContextualTip } from "@/components/onboarding/contextual-tip";
 import { API_URL, apiRequest, customizeTailoredPackage, getMasterVault, type MasterProfile } from "@/lib/api";
 
 type Job = {
@@ -180,12 +181,18 @@ export default function QueueView() {
   return (
     <div className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 md:px-8 md:py-12">
       <PageHeader eyebrow={`${jobs.length} awaiting approval`} title="Review queue" subtitle="Review the real tailored package before approving an application." />
+      <ContextualTip
+        tipKey="queue-first-visit"
+        title="Review before submit"
+        body="Check the match score, JD fit, and tailored ATS resume PDF. When you approve, Playwright can submit for you - if an OTP is required, you'll be prompted live to verify it."
+        className="mt-6"
+      />
       {loading ? <p className="py-12 text-center text-sm text-muted-foreground">Loading your review queue...</p> : jobs.length === 0 ? (
         <div className="mt-8 rounded-3xl border border-dashed border-border p-10 text-center"><p className="ui-title">Nothing waiting for review</p><p className="mx-auto mt-2 max-w-xl text-sm text-muted-foreground">No tailored applications waiting for approval yet. Run the Scout or paste a job link to generate tailored ATS packages.</p><Button asChild variant="hero" className="mt-5"><Link href="/agent">Go to Command Center</Link></Button></div>
       ) : <div className="mt-8 grid gap-5 lg:grid-cols-[320px_minmax(0,1fr)]">
         <ul className="space-y-2">{jobs.map((job) => <li key={job.id}><button type="button" onClick={() => { if (selectedId !== job.id) setPackageState({ jobId: job.id, status: "loading" }); setSelectedId(job.id); }} className={`w-full rounded-2xl border p-4 text-left ${selectedId === job.id ? "border-mint/60 bg-card shadow-glow" : "border-border bg-card hover:bg-accent/30"}`}><p className="font-medium">{job.role_title}</p><p className="mt-1 text-sm text-muted-foreground">{job.company_name}</p><p className="mt-3 text-xs text-muted-foreground">{job.match_score}% match · {job.location_type} · {job.ats_platform}</p></button></li>)}</ul>
         {!selectedId ? <div className="grid min-h-60 place-items-center rounded-3xl border border-dashed border-border p-8 text-center text-sm text-muted-foreground">Select an application to review its tailored package.</div> : selected && <section className="min-w-0 space-y-5 rounded-3xl border border-border bg-card p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-3xl">{selected.role_title}</h2><p className="mt-1 text-muted-foreground">{selected.company_name} · {selected.location_type} · {selected.match_score}% match</p>{selected.match_reasoning && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{selected.match_reasoning}</p>}</div><Button asChild size="sm" variant="outline"><a href={selected.external_url} target="_blank" rel="noreferrer"><ExternalLink /> Job post</a></Button></div>
+          <div className="flex flex-wrap items-start justify-between gap-3"><div><h2 className="font-display text-2xl sm:text-3xl">{selected.role_title}</h2><p className="mt-1 text-muted-foreground">{selected.company_name} · {selected.location_type} · <span className="font-mono tabular-nums">{selected.match_score}% match</span></p>{selected.match_reasoning && <p className="mt-3 max-w-2xl text-sm text-muted-foreground">{selected.match_reasoning}</p>}</div><Button asChild size="sm" variant="outline"><a href={selected.external_url} target="_blank" rel="noreferrer"><ExternalLink /> Job post</a></Button></div>
           {packageLoading ? <p className="py-8 text-center text-sm text-muted-foreground">Loading tailored application...</p> : !packageData ? <p className="py-6 text-sm text-muted-foreground">The tailored package is not available.</p> : <>
             <div className="grid gap-5 xl:grid-cols-2">
               <div className="space-y-4"><div><p className="text-sm font-medium">Tailored headline</p><p className="mt-1">{packageData.target_role_headline}</p></div><div><p className="text-sm font-medium">Tailored summary</p><p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{packageData.tailored_summary}</p></div><p className="text-sm">Review score: <span className="font-semibold">{packageData.critic_score}/100</span>{packageData.critic_feedback && <span className="ml-2 text-muted-foreground">{packageData.critic_feedback}</span>}</p>

@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { PageHeader } from "@/components/app-shell";
+import { ContextualTip } from "@/components/onboarding/contextual-tip";
 import { apiRequest, uploadCv } from "@/lib/api";
 
 type Experience = {
@@ -214,6 +215,15 @@ export default function VaultView() {
         <span className="grid size-12 place-items-center rounded-2xl bg-accent text-accent-foreground"><FileUp className="size-5" /></span>
         <span><span className="block font-medium">{uploading ? "Extracting your CV..." : "Drop your base CV PDF here or browse"}</span><span className="mt-1 block text-sm text-muted-foreground">Your extracted details will be editable below.</span></span>
       </label>
+
+      {!loading && profile.experiences.length === 0 && profile.projects.length === 0 ? (
+        <ContextualTip
+          tipKey="vault-empty"
+          title="Build your Master Vault faster"
+          body="Upload a PDF/DOCX to auto-extract experiences and project tags for dynamic role matching. Review everything before saving - Verdant only uses verified facts you approve."
+          className="mt-6"
+        />
+      ) : null}
 
       {loading ? <p className="py-10 text-center text-sm text-muted-foreground">Loading your saved Vault...</p> : (
         <div className="mt-6 space-y-6">

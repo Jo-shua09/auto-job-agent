@@ -50,13 +50,13 @@ export default function HistoryView() {
         <div className="mt-8 space-y-8">
           {history.days.map((day) => (
             <section key={day.day_label}>
-              <div className="mb-3 flex items-baseline justify-between"><h2 className="ui-title">{day.day_label}</h2><span className="font-mono text-xs text-muted-foreground">{day.count} {day.count === 1 ? "application" : "applications"}</span></div>
+                <div className="mb-3 flex items-baseline justify-between"><h2 className="ui-title">{day.day_label}</h2><span className="font-mono text-xs tabular-nums text-muted-foreground">{day.count} {day.count === 1 ? "application" : "applications"}</span></div>
               <ul className="overflow-hidden rounded-3xl border border-border bg-card">
                 {day.applications.map((application) => {
                   const cv = absoluteUrl(application.cv_preview_url);
                   const screenshot = absoluteUrl(application.screenshot_url);
                   return <li key={application.id} className="flex flex-col gap-3 border-b border-border p-4 last:border-b-0 sm:flex-row sm:items-center">
-                    <time className="w-24 shrink-0 font-mono text-xs text-muted-foreground">{application.applied_time_label || (application.applied_at ? new Date(application.applied_at).toLocaleTimeString() : "")}</time>
+                    <time className="w-24 shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{application.applied_time_label || (application.applied_at ? new Date(application.applied_at).toLocaleTimeString() : "")}</time>
                     <div className="min-w-0 flex-1"><p className="truncate font-medium">{application.role_title}</p><p className="truncate text-sm text-muted-foreground">{application.company_name} · {application.status}</p><p className="mt-1 text-xs text-muted-foreground">Inbox: {application.last_email_category || "No update received"}</p></div>
                     <div className="flex flex-wrap gap-2">
                       {cv ? <Button asChild size="sm" variant="outline"><a href={cv} target="_blank" rel="noreferrer"><FileText /> CV used</a></Button> : <Button size="sm" variant="outline" disabled><FileText /> CV unavailable</Button>}

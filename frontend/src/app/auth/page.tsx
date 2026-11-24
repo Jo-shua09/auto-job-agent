@@ -169,7 +169,7 @@ export default function AuthPage() {
             <p className="font-mono text-[0.6875rem] font-medium tracking-[0.2em] text-mint uppercase">
               Your search, on autopilot
             </p>
-            <h2 className="font-display max-w-xl text-5xl leading-[1.04] xl:text-6xl">
+            <h2 className="font-display max-w-xl text-4xl leading-[1.04] sm:text-5xl xl:text-6xl">
               Stop filling forms. <em className="text-mint">Start interviewing.</em>
             </h2>
           </div>
@@ -190,7 +190,7 @@ export default function AuthPage() {
             <p className="font-mono text-[0.6875rem] font-medium tracking-[0.18em] text-mint uppercase">
               {mode === "forgot" ? "Account recovery" : "Welcome to Verdant"}
             </p>
-            <h1 className="font-display text-4xl leading-tight">
+            <h1 className="font-display text-3xl leading-tight sm:text-4xl">
               {mode === "forgot" ? "Reset your password" : mode === "signup" ? "Create your account" : "Welcome back"}
             </h1>
             <p className="text-sm leading-6 text-muted-foreground">

@@ -42,7 +42,7 @@ export function Chip({
 
 export function MatchBadge({ value }: { value: number }) {
   return (
-    <span className="shrink-0 rounded-full bg-primary px-2.5 py-0.5 font-mono text-[0.6875rem] font-semibold text-primary-foreground">{value}% match</span>
+    <span className="shrink-0 rounded-full bg-primary px-2.5 py-0.5 font-mono text-[0.6875rem] font-semibold tabular-nums text-primary-foreground">{value}% match</span>
   );
 }
 

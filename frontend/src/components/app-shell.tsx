@@ -7,6 +7,7 @@ import {
   AlertCircle,
   CalendarClock,
   ChevronDown,
+  CircleHelp,
   Inbox,
   LogOut,
   Moon,
@@ -34,6 +35,7 @@ import { OtpDialog } from "@/components/otp-banner";
 import { useTheme } from "@/lib/theme";
 import { getAuthToken, logoutUser, onSessionChange } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { useOnboardingTour } from "@/components/onboarding/onboarding-context";
 
 const NAV = [
   { to: "/agent", label: "Agent", icon: Radar },
@@ -62,7 +64,7 @@ function QuotaRing({ size = 44, used = 0, limit = 10 }: { size?: number; used?: 
           strokeDashoffset={c * (1 - pct)}
         />
       </svg>
-      <span className="absolute inset-0 grid place-items-center font-mono text-[0.6875rem] font-semibold">{used}</span>
+      <span className="absolute inset-0 grid place-items-center font-mono text-[0.6875rem] font-semibold tabular-nums">{used}</span>
     </div>
   );
 }
@@ -71,6 +73,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { theme, toggle } = useTheme();
+  const { startTour } = useOnboardingTour();
   const [user, setUser] = useState<{ name: string; email: string } | null>(null);
   const [quota, setQuota] = useState({ applied_today: 0, daily_apply_limit: 10 });
   const [queueCount, setQueueCount] = useState(0);
@@ -228,7 +231,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {!collapsed && (
             <div className="min-w-0">
               <p className="text-xs text-muted-foreground">Applied today</p>
-              <p className="font-mono text-sm font-semibold">
+              <p className="font-mono text-sm font-semibold tabular-nums">
                 {quota.applied_today} <span className="text-muted-foreground">/ {quota.daily_apply_limit}</span>
               </p>
             </div>
@@ -246,6 +249,7 @@ export function AppShell({ children }: { children: ReactNode }) {
                 title={label}
                 aria-label={label}
                 aria-current={active ? "page" : undefined}
+                data-tour={to === "/vault" ? "nav-vault" : to === "/queue" ? "nav-queue" : undefined}
                 className={cn(
                   "group relative flex items-center rounded-xl py-2.5 text-sm transition-colors",
                   collapsed ? "justify-center px-0" : "gap-3 px-3",
@@ -272,6 +276,18 @@ export function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="space-y-2 p-3">
+          <button
+            onClick={startTour}
+            aria-label="Start guided tour"
+            title="Guide"
+            className={cn(
+              "flex w-full items-center rounded-xl py-2.5 text-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground",
+              collapsed ? "justify-center px-0" : "gap-3 px-3",
+            )}
+          >
+            <CircleHelp className="size-4.5" />
+            {!collapsed && "Guide"}
+          </button>
           <button
             onClick={toggle}
             aria-label={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
@@ -340,6 +356,10 @@ export function AppShell({ children }: { children: ReactNode }) {
                   <Settings2 className="size-4" />
                   Settings
                 </Link>
+              </DropdownMenuItem>
+              <DropdownMenuItem onSelect={startTour} className="min-h-10 cursor-pointer gap-2 rounded-lg">
+                <CircleHelp className="size-4" />
+                Guide
               </DropdownMenuItem>
               <DropdownMenuItem onSelect={toggle} className="min-h-10 cursor-pointer gap-2 rounded-lg">
                 {theme === "dark" ? <Sun className="size-4" /> : <Moon className="size-4" />}
@@ -410,6 +430,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               href={to}
               aria-label={label}
               aria-current={active ? "page" : undefined}
+              data-tour={to === "/vault" ? "nav-vault-mobile" : to === "/queue" ? "nav-queue-mobile" : undefined}
               className="relative flex min-w-0 flex-1 flex-col items-center justify-center gap-0.5 py-1"
             >
               <span
@@ -439,8 +460,8 @@ export function PageHeader({ eyebrow, title, subtitle, action }: { eyebrow?: str
     <div className="flex min-w-0 flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
         {eyebrow && <p className="mb-1.5 font-mono text-[0.6875rem] tracking-[0.18em] text-mint uppercase">{eyebrow}</p>}
-        <h1 className="font-display text-4xl leading-[1.05] wrap-break-word sm:text-5xl">{title}</h1>
-        {subtitle && <p className="mt-2 max-w-xl text-[0.9375rem] leading-6 text-muted-foreground">{subtitle}</p>}
+        <h1 className="font-display text-[2rem] leading-[1.05] wrap-break-word sm:text-5xl">{title}</h1>
+        {subtitle && <p className="mt-2 max-w-xl text-sm leading-6 text-muted-foreground sm:text-[0.9375rem]">{subtitle}</p>}
       </div>
       {action && <div className="shrink-0">{action}</div>}
     </div>
